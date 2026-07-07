@@ -24,6 +24,9 @@ def should_paper_buy(
     row: dict[str, Any],
     min_score: int = 75,
     allowed_actions: set[str] | None = None,
+    min_entry_price: float = 0.02,
+    max_entry_price: float = 0.95,
+    min_top_liquidity: float = 10.0,
 ) -> bool:
     if allowed_actions is None:
         allowed_actions = {"PRIORITY_WATCH", "WATCH"}
@@ -39,10 +42,13 @@ def should_paper_buy(
     if action not in allowed_actions:
         return False
 
-    if ask <= 0 or ask >= 1:
+    if ask < min_entry_price:
         return False
 
-    if top_liquidity < 10:
+    if ask > max_entry_price:
+        return False
+
+    if top_liquidity < min_top_liquidity:
         return False
 
     return True
@@ -75,17 +81,17 @@ def create_paper_buy(
     }
 
 
-def load_existing_open_token_ids() -> set[str]:
+def load_existing_open_questions() -> set[str]:
     if not PAPER_TRADES_PATH.exists():
         return set()
 
     df = pd.read_csv(PAPER_TRADES_PATH)
 
-    if df.empty or "status" not in df.columns or "token_id" not in df.columns:
+    if df.empty or "status" not in df.columns or "question" not in df.columns:
         return set()
 
     open_df = df[df["status"] == "OPEN"]
-    return set(open_df["token_id"].astype(str).tolist())
+    return set(open_df["question"].astype(str).tolist())
 
 
 def save_paper_trades(trades: list[dict[str, Any]]) -> None:
@@ -102,26 +108,53 @@ def save_paper_trades(trades: list[dict[str, Any]]) -> None:
         df.to_csv(PAPER_TRADES_PATH, index=False)
 
 
+def sort_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            int(row.get("score") or 0),
+            float(row.get("top_liquidity") or 0),
+            -float(row.get("spread") or 999),
+        ),
+        reverse=True,
+    )
+
+
 def generate_paper_buys(
     rows: list[dict[str, Any]],
     usdc_amount: float = 5.0,
     min_score: int = 75,
     avoid_duplicates: bool = True,
 ) -> list[dict[str, Any]]:
-    existing_open_token_ids = load_existing_open_token_ids() if avoid_duplicates else set()
+    """
+    Genera compras simuladas con reglas básicas de riesgo:
+    - No compra ambos lados del mismo mercado.
+    - No abre otra posición si ya hay una abierta para la misma pregunta.
+    - Evita precios extremadamente cerca de 0 o 1.
+    - Prioriza por score.
+    """
+    existing_open_questions = load_existing_open_questions() if avoid_duplicates else set()
+    opened_questions_this_run: set[str] = set()
 
     trades = []
 
-    for row in rows:
-        token_id = str(row.get("token_id", ""))
+    for row in sort_candidates(rows):
+        question = str(row.get("question", ""))
 
-        if avoid_duplicates and token_id in existing_open_token_ids:
+        if not question:
+            continue
+
+        if avoid_duplicates and question in existing_open_questions:
+            continue
+
+        if question in opened_questions_this_run:
             continue
 
         if should_paper_buy(row, min_score=min_score):
             trade = create_paper_buy(row, usdc_amount=usdc_amount)
             trades.append(trade)
-            existing_open_token_ids.add(token_id)
+            opened_questions_this_run.add(question)
+            existing_open_questions.add(question)
 
     save_paper_trades(trades)
 
