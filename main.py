@@ -30,11 +30,14 @@ def print_snapshot_table(rows: list[dict], alerts_only: bool = False) -> None:
     table.add_column("Mid", justify="right")
     table.add_column("Top Liq", justify="right")
     table.add_column("Señal")
+    table.add_column("Score", justify="right")
+    table.add_column("Grade", justify="center")
+    table.add_column("Action")
 
     for idx, row in enumerate(display_rows[:30], start=1):
         table.add_row(
             str(idx),
-            str(row.get("question", ""))[:65],
+            str(row.get("question", ""))[:55],
             str(row.get("outcome", "")),
             str(row.get("best_bid", "")),
             str(row.get("best_ask", "")),
@@ -42,6 +45,9 @@ def print_snapshot_table(rows: list[dict], alerts_only: bool = False) -> None:
             str(row.get("mid_price", "")),
             str(row.get("top_liquidity", "")),
             str(row.get("signal", "")),
+            str(row.get("score", "")),
+            str(row.get("grade", "")),
+            str(row.get("action", "")),
         )
 
     console.print(table)

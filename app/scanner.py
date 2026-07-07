@@ -8,6 +8,7 @@ import pandas as pd
 from app.data.polymarket_gamma import get_active_events, extract_market_rows
 from app.data.polymarket_clob import get_orderbook, summarize_orderbook
 from app.signals.orderbook_signal import classify_orderbook
+from app.signals.scoring import score_orderbook_row
 
 
 DATA_DIR = Path("data")
@@ -56,24 +57,27 @@ def collect_orderbook_snapshot(
 
                 is_alert = signal in {"WATCH_TIGHT_SPREAD", "WATCH"}
 
-                snapshot_rows.append(
-                    {
-                        "observed_at": observed_at,
-                        "question": market.get("question", ""),
-                        "outcome": outcome_name,
-                        "token_id": token_id,
-                        "best_bid": summary.get("best_bid"),
-                        "best_ask": summary.get("best_ask"),
-                        "spread": summary.get("spread"),
-                        "mid_price": summary.get("mid_price"),
-                        "bid_size": bid_size,
-                        "ask_size": ask_size,
-                        "top_liquidity": top_liquidity,
-                        "last_trade_price": summary.get("last_trade_price"),
-                        "signal": signal,
-                        "is_alert": is_alert,
-                    }
-                )
+                base_row = {
+                    "observed_at": observed_at,
+                    "question": market.get("question", ""),
+                    "outcome": outcome_name,
+                    "token_id": token_id,
+                    "best_bid": summary.get("best_bid"),
+                    "best_ask": summary.get("best_ask"),
+                    "spread": summary.get("spread"),
+                    "mid_price": summary.get("mid_price"),
+                    "bid_size": bid_size,
+                    "ask_size": ask_size,
+                    "top_liquidity": top_liquidity,
+                    "last_trade_price": summary.get("last_trade_price"),
+                    "signal": signal,
+                    "is_alert": is_alert,
+                }
+
+                score_data = score_orderbook_row(base_row)
+                base_row.update(score_data)
+
+                snapshot_rows.append(base_row)
 
                 time.sleep(request_delay)
 
@@ -94,6 +98,13 @@ def collect_orderbook_snapshot(
                         "last_trade_price": None,
                         "signal": f"ERROR: {error}",
                         "is_alert": False,
+                        "score": 0,
+                        "grade": "F",
+                        "action": "IGNORE",
+                        "spread_points": 0,
+                        "liquidity_points": 0,
+                        "price_zone_points": 0,
+                        "balance_points": 0,
                     }
                 )
 
