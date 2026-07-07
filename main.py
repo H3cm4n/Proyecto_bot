@@ -10,6 +10,7 @@ from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
 from app.execution.paper_manager import evaluate_open_positions
+from app.execution.paper_report import build_performance_report, save_performance_report
 
 console = Console()
 DATA_DIR = Path("data")
@@ -327,6 +328,79 @@ def run_paper_manage(args: argparse.Namespace) -> None:
     else:
         console.print("[yellow]Modo revisión: no se cerró ninguna posición. Usa --close para aplicar cierres.[/yellow]")
 
+
+def print_performance_report(report: dict) -> None:
+    if not report.get("has_data"):
+        console.print(f"[yellow]{report.get('message', 'No hay datos PAPER.')}[/yellow]")
+        return
+
+    if report.get("closed_trades", 0) == 0:
+        console.print(f"[yellow]{report.get('message', 'No hay trades cerrados.')}[/yellow]")
+        console.print(f"[bold]Trades abiertos:[/bold] {report.get('open_trades', 0)}")
+        return
+
+    table = Table(title="Reporte de performance PAPER")
+
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Trades cerrados", str(report.get("closed_trades", 0)))
+    table.add_row("Trades abiertos", str(report.get("open_trades", 0)))
+    table.add_row("Capital invertido", f"${report.get('total_invested', 0)}")
+    table.add_row("PnL total", f"${report.get('total_pnl', 0)}")
+    table.add_row("ROI total", f"{report.get('total_roi_pct', 0)}%")
+    table.add_row("Winrate", f"{report.get('winrate_pct', 0)}%")
+    table.add_row("Loss rate", f"{report.get('loss_rate_pct', 0)}%")
+    table.add_row("ROI promedio", f"{report.get('avg_roi_pct', 0)}%")
+    table.add_row("Wins", str(report.get("wins", 0)))
+    table.add_row("Losses", str(report.get("losses", 0)))
+    table.add_row("Breakeven", str(report.get("breakeven", 0)))
+
+    console.print(table)
+
+    exit_counts = report.get("exit_reason_counts", {})
+    if exit_counts:
+        reason_table = Table(title="Motivos de salida")
+        reason_table.add_column("Motivo")
+        reason_table.add_column("Cantidad", justify="right")
+
+        for reason, count in exit_counts.items():
+            reason_table.add_row(str(reason), str(count))
+
+        console.print(reason_table)
+
+    best_trade = report.get("best_trade", {})
+    worst_trade = report.get("worst_trade", {})
+
+    console.print("[bold green]Mejor trade:[/bold green]")
+    console.print(
+        f"{best_trade.get('outcome', '')} | "
+        f"PnL: ${best_trade.get('realized_pnl_usdc', '')} | "
+        f"ROI: {best_trade.get('realized_roi_pct', '')}% | "
+        f"{str(best_trade.get('question', ''))[:100]}"
+    )
+
+    console.print("[bold red]Peor trade:[/bold red]")
+    console.print(
+        f"{worst_trade.get('outcome', '')} | "
+        f"PnL: ${worst_trade.get('realized_pnl_usdc', '')} | "
+        f"ROI: {worst_trade.get('realized_roi_pct', '')}% | "
+        f"{str(worst_trade.get('question', ''))[:100]}"
+    )
+
+
+def run_paper_report(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER PERFORMANCE REPORT")
+
+    report = build_performance_report()
+    output_path = save_performance_report(report)
+
+    print_performance_report(report)
+
+    if report.get("has_data"):
+        console.print(f"[green]Reporte guardado en:[/green] {output_path}")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -362,6 +436,9 @@ def build_parser() -> argparse.ArgumentParser:
     paper_manage.add_argument("--take-profit", type=float, default=25.0)
     paper_manage.add_argument("--close", action="store_true", help="Aplica cierres en paper_trades.csv.")
     paper_manage.set_defaults(func=run_paper_manage)
+
+    paper_report = subparsers.add_parser("paper-report", help="Muestra performance de trades PAPER.")
+    paper_report.set_defaults(func=run_paper_report)
 
     return parser
 
