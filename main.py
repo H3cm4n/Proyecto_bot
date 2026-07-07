@@ -7,6 +7,7 @@ from rich.table import Table
 
 from app.config import settings
 from app.scanner import collect_orderbook_snapshot, save_snapshot
+from app.execution.paper_broker import generate_paper_buys
 
 
 console = Console()
@@ -80,6 +81,52 @@ def print_snapshot_table(
     console.print(table)
 
 
+def print_paper_trades_table(trades: list[dict]) -> None:
+    if not trades:
+        console.print("[yellow]Paper-trading: no se generaron compras simuladas.[/yellow]")
+        return
+
+    table = Table(title="Compras simuladas PAPER")
+
+    table.add_column("#", justify="right")
+    table.add_column("Outcome")
+    table.add_column("Entry", justify="right")
+    table.add_column("Shares", justify="right")
+    table.add_column("USDC", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Pregunta", overflow="fold")
+
+    for idx, trade in enumerate(trades, start=1):
+        table.add_row(
+            str(idx),
+            str(trade.get("outcome", "")),
+            str(trade.get("entry_price", "")),
+            str(trade.get("shares", "")),
+            str(trade.get("notional_usdc", "")),
+            str(trade.get("score", "")),
+            str(trade.get("question", ""))[:80],
+        )
+
+    console.print(table)
+
+
+def maybe_run_paper_trading(args: argparse.Namespace, rows: list[dict]) -> None:
+    if not args.paper:
+        return
+
+    trades = generate_paper_buys(
+        rows=rows,
+        usdc_amount=args.paper_size,
+        min_score=args.paper_min_score,
+        avoid_duplicates=True,
+    )
+
+    print_paper_trades_table(trades)
+
+    if trades:
+        console.print("[green]Paper trades guardados en:[/green] data/paper_trades.csv")
+
+
 def run_snapshot(args: argparse.Namespace) -> None:
     console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
     console.print(f"[bold yellow]Live trading:[/bold yellow] {settings.live_trading}")
@@ -103,6 +150,8 @@ def run_snapshot(args: argparse.Namespace) -> None:
         alerts_only=args.alerts,
         min_score=args.min_score,
     )
+
+    maybe_run_paper_trading(args, rows)
 
     console.print(f"\n[green]Snapshot guardado en:[/green] {snapshot_path}")
     console.print(f"[green]Filas obtenidas:[/green] {len(rows)}")
@@ -135,6 +184,8 @@ def run_scan(args: argparse.Namespace) -> None:
                     min_score=args.min_score,
                 )
 
+                maybe_run_paper_trading(args, rows)
+
                 console.print(f"[green]Historial actualizado:[/green] {history_path}")
                 console.print(f"[green]Filas agregadas:[/green] {len(rows)}")
             else:
@@ -148,6 +199,17 @@ def run_scan(args: argparse.Namespace) -> None:
         console.print("\n[yellow]Scanner detenido por el usuario.[/yellow]")
 
 
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--event-limit", type=int, default=20)
+    parser.add_argument("--market-limit", type=int, default=10)
+    parser.add_argument("--request-delay", type=float, default=0.25)
+    parser.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
+    parser.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
+    parser.add_argument("--paper", action="store_true", help="Activa compras simuladas.")
+    parser.add_argument("--paper-size", type=float, default=5.0, help="Tamaño ficticio por trade en USDC.")
+    parser.add_argument("--paper-min-score", type=int, default=75, help="Score mínimo para compra simulada.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Bot read-only para escanear mercados de Polymarket."
@@ -156,21 +218,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     snapshot = subparsers.add_parser("snapshot", help="Toma un snapshot único.")
-    snapshot.add_argument("--event-limit", type=int, default=20)
-    snapshot.add_argument("--market-limit", type=int, default=10)
-    snapshot.add_argument("--request-delay", type=float, default=0.25)
-    snapshot.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
-    snapshot.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
+    add_common_args(snapshot)
     snapshot.set_defaults(func=run_snapshot)
 
     scan = subparsers.add_parser("scan", help="Ejecuta scanner continuo.")
-    scan.add_argument("--event-limit", type=int, default=20)
-    scan.add_argument("--market-limit", type=int, default=10)
-    scan.add_argument("--request-delay", type=float, default=0.25)
+    add_common_args(scan)
     scan.add_argument("--interval", type=int, default=30)
     scan.add_argument("--cycles", type=int, default=5)
-    scan.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
-    scan.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
     scan.set_defaults(func=run_scan)
 
     return parser
