@@ -41,6 +41,12 @@ def ensure_exit_columns(df: pd.DataFrame) -> pd.DataFrame:
         if column not in df.columns:
             df[column] = default
 
+        # Evita errores de dtype al asignar floats/strings después.
+        df[column] = df[column].astype("object")
+
+    if "status" in df.columns:
+        df["status"] = df["status"].astype("object")
+
     return df
 
 
@@ -56,6 +62,25 @@ def get_exit_reason(
         return "TAKE_PROFIT"
 
     return None
+
+
+def close_trade_in_dataframe(
+    df: pd.DataFrame,
+    index: int,
+    marked: dict[str, Any],
+    exit_reason: str,
+) -> None:
+    """
+    Cierra una posición PAPER dentro del DataFrame.
+    Todos los valores se asignan de forma compatible con Pandas.
+    """
+    df.at[index, "status"] = "CLOSED"
+    df.at[index, "closed_at"] = now_utc()
+    df.at[index, "exit_price"] = float(marked.get("current_bid") or 0)
+    df.at[index, "exit_value_usdc"] = float(marked.get("exit_value_bid") or 0)
+    df.at[index, "realized_pnl_usdc"] = float(marked.get("pnl_bid") or 0)
+    df.at[index, "realized_roi_pct"] = float(marked.get("roi_bid_pct") or 0)
+    df.at[index, "exit_reason"] = exit_reason
 
 
 def evaluate_open_positions(
@@ -85,37 +110,39 @@ def evaluate_open_positions(
         try:
             marked = mark_trade_to_market(trade.to_dict())
             roi_bid_pct = float(marked.get("roi_bid_pct") or 0)
+
             exit_reason = get_exit_reason(
                 roi_bid_pct=roi_bid_pct,
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
             )
 
-            result = {
-                "row_index": index,
-                "question": marked.get("question", ""),
-                "outcome": marked.get("outcome", ""),
-                "entry_price": marked.get("entry_price", ""),
-                "current_bid": marked.get("current_bid", ""),
-                "current_ask": marked.get("current_ask", ""),
-                "shares": marked.get("shares", ""),
-                "exit_value_bid": marked.get("exit_value_bid", ""),
-                "pnl_bid": marked.get("pnl_bid", ""),
-                "roi_bid_pct": roi_bid_pct,
-                "exit_reason": exit_reason or "HOLD",
-                "will_close": exit_reason is not None,
-            }
+            will_close = exit_reason is not None
 
-            results.append(result)
+            if close_positions and will_close:
+                close_trade_in_dataframe(
+                    df=df,
+                    index=index,
+                    marked=marked,
+                    exit_reason=exit_reason,
+                )
 
-            if close_positions and exit_reason is not None:
-                df.at[index, "status"] = "CLOSED"
-                df.at[index, "closed_at"] = now_utc()
-                df.at[index, "exit_price"] = marked.get("current_bid", "")
-                df.at[index, "exit_value_usdc"] = marked.get("exit_value_bid", "")
-                df.at[index, "realized_pnl_usdc"] = marked.get("pnl_bid", "")
-                df.at[index, "realized_roi_pct"] = marked.get("roi_bid_pct", "")
-                df.at[index, "exit_reason"] = exit_reason
+            results.append(
+                {
+                    "row_index": index,
+                    "question": marked.get("question", ""),
+                    "outcome": marked.get("outcome", ""),
+                    "entry_price": marked.get("entry_price", ""),
+                    "current_bid": marked.get("current_bid", ""),
+                    "current_ask": marked.get("current_ask", ""),
+                    "shares": marked.get("shares", ""),
+                    "exit_value_bid": marked.get("exit_value_bid", ""),
+                    "pnl_bid": marked.get("pnl_bid", ""),
+                    "roi_bid_pct": roi_bid_pct,
+                    "exit_reason": exit_reason or "HOLD",
+                    "will_close": will_close,
+                }
+            )
 
         except Exception as error:
             results.append(
@@ -123,6 +150,13 @@ def evaluate_open_positions(
                     "row_index": index,
                     "question": trade.get("question", ""),
                     "outcome": trade.get("outcome", ""),
+                    "entry_price": trade.get("entry_price", ""),
+                    "current_bid": "",
+                    "current_ask": "",
+                    "shares": trade.get("shares", ""),
+                    "exit_value_bid": "",
+                    "pnl_bid": "",
+                    "roi_bid_pct": "",
                     "exit_reason": f"ERROR: {error}",
                     "will_close": False,
                 }
