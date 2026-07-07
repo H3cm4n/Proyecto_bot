@@ -8,6 +8,7 @@ from rich.table import Table
 from app.config import settings
 from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
+from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
 
 
 console = Console()
@@ -110,6 +111,71 @@ def print_paper_trades_table(trades: list[dict]) -> None:
     console.print(table)
 
 
+def print_portfolio_table(rows: list[dict]) -> None:
+    if not rows:
+        console.print("[yellow]No hay posiciones PAPER abiertas.[/yellow]")
+        return
+
+    table = Table(title="Portfolio PAPER - Mark to Market")
+
+    table.add_column("#", justify="right")
+    table.add_column("Outcome")
+    table.add_column("Entry", justify="right")
+    table.add_column("Bid", justify="right")
+    table.add_column("Ask", justify="right")
+    table.add_column("Shares", justify="right")
+    table.add_column("Value@Bid", justify="right")
+    table.add_column("PnL@Bid", justify="right")
+    table.add_column("ROI%", justify="right")
+    table.add_column("Pregunta", overflow="fold")
+
+    total_notional = 0.0
+    total_value_bid = 0.0
+    total_pnl_bid = 0.0
+
+    for idx, row in enumerate(rows, start=1):
+        if "error" in row:
+            table.add_row(
+                str(idx),
+                str(row.get("outcome", "")),
+                "ERR",
+                "ERR",
+                "ERR",
+                "ERR",
+                "ERR",
+                "ERR",
+                "ERR",
+                str(row.get("question", ""))[:80],
+            )
+            continue
+
+        total_notional += float(row.get("notional_usdc") or 0)
+        total_value_bid += float(row.get("exit_value_bid") or 0)
+        total_pnl_bid += float(row.get("pnl_bid") or 0)
+
+        table.add_row(
+            str(idx),
+            str(row.get("outcome", "")),
+            str(row.get("entry_price", "")),
+            str(row.get("current_bid", "")),
+            str(row.get("current_ask", "")),
+            str(row.get("shares", "")),
+            str(row.get("exit_value_bid", "")),
+            str(row.get("pnl_bid", "")),
+            str(row.get("roi_bid_pct", "")),
+            str(row.get("question", ""))[:80],
+        )
+
+    console.print(table)
+
+    total_roi = round((total_pnl_bid / total_notional) * 100, 2) if total_notional else 0
+
+    console.print(f"[bold]Capital simulado invertido:[/bold] ${round(total_notional, 4)}")
+    console.print(f"[bold]Valor conservador @ bid:[/bold] ${round(total_value_bid, 4)}")
+    console.print(f"[bold]PnL no realizado @ bid:[/bold] ${round(total_pnl_bid, 4)}")
+    console.print(f"[bold]ROI no realizado @ bid:[/bold] {total_roi}%")
+
+
 def maybe_run_paper_trading(args: argparse.Namespace, rows: list[dict]) -> None:
     if not args.paper:
         return
@@ -199,6 +265,19 @@ def run_scan(args: argparse.Namespace) -> None:
         console.print("\n[yellow]Scanner detenido por el usuario.[/yellow]")
 
 
+def run_portfolio(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER PORTFOLIO, sin wallet, sin compras")
+
+    rows = mark_open_trades_to_market()
+    output_path = save_portfolio_snapshot(rows)
+
+    print_portfolio_table(rows)
+
+    if rows:
+        console.print(f"[green]Snapshot de portfolio guardado en:[/green] {output_path}")
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -226,6 +305,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--interval", type=int, default=30)
     scan.add_argument("--cycles", type=int, default=5)
     scan.set_defaults(func=run_scan)
+
+    portfolio = subparsers.add_parser("portfolio", help="Valúa posiciones PAPER abiertas.")
+    portfolio.set_defaults(func=run_portfolio)
 
     return parser
 
