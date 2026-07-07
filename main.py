@@ -9,7 +9,7 @@ from app.config import settings
 from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
-
+from app.execution.paper_manager import evaluate_open_positions
 
 console = Console()
 DATA_DIR = Path("data")
@@ -277,6 +277,55 @@ def run_portfolio(args: argparse.Namespace) -> None:
     if rows:
         console.print(f"[green]Snapshot de portfolio guardado en:[/green] {output_path}")
 
+def print_paper_management_table(rows: list[dict]) -> None:
+    if not rows:
+        console.print("[yellow]No hay posiciones PAPER abiertas para evaluar.[/yellow]")
+        return
+
+    table = Table(title="Gestión de posiciones PAPER")
+
+    table.add_column("#", justify="right")
+    table.add_column("Outcome")
+    table.add_column("Entry", justify="right")
+    table.add_column("Bid", justify="right")
+    table.add_column("Ask", justify="right")
+    table.add_column("PnL", justify="right")
+    table.add_column("ROI%", justify="right")
+    table.add_column("Decisión")
+    table.add_column("Pregunta", overflow="fold")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("outcome", "")),
+            str(row.get("entry_price", "")),
+            str(row.get("current_bid", "")),
+            str(row.get("current_ask", "")),
+            str(row.get("pnl_bid", "")),
+            str(row.get("roi_bid_pct", "")),
+            str(row.get("exit_reason", "")),
+            str(row.get("question", ""))[:80],
+        )
+
+    console.print(table)
+
+
+def run_paper_manage(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER POSITION MANAGER, sin wallet, sin compras reales")
+
+    rows = evaluate_open_positions(
+        stop_loss_pct=args.stop_loss,
+        take_profit_pct=args.take_profit,
+        close_positions=args.close,
+    )
+
+    print_paper_management_table(rows)
+
+    if args.close:
+        console.print("[green]Archivo actualizado:[/green] data/paper_trades.csv")
+    else:
+        console.print("[yellow]Modo revisión: no se cerró ninguna posición. Usa --close para aplicar cierres.[/yellow]")
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
@@ -308,6 +357,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     portfolio = subparsers.add_parser("portfolio", help="Valúa posiciones PAPER abiertas.")
     portfolio.set_defaults(func=run_portfolio)
+    paper_manage = subparsers.add_parser("paper-manage", help="Evalúa/cierra posiciones PAPER.")
+    paper_manage.add_argument("--stop-loss", type=float, default=-20.0)
+    paper_manage.add_argument("--take-profit", type=float, default=25.0)
+    paper_manage.add_argument("--close", action="store_true", help="Aplica cierres en paper_trades.csv.")
+    paper_manage.set_defaults(func=run_paper_manage)
 
     return parser
 
