@@ -13,41 +13,68 @@ console = Console()
 DATA_DIR = Path("data")
 
 
-def print_snapshot_table(rows: list[dict], alerts_only: bool = False) -> None:
-    display_rows = rows
+def filter_and_sort_rows(
+    rows: list[dict],
+    alerts_only: bool = False,
+    min_score: int = 0,
+) -> list[dict]:
+    filtered_rows = []
 
-    if alerts_only:
-        display_rows = [row for row in rows if row.get("is_alert")]
+    for row in rows:
+        score = int(row.get("score") or 0)
+        action = str(row.get("action") or "")
 
-    table = Table(title="Scanner de orderbooks")
+        if score < min_score:
+            continue
 
-    table.add_column("#", justify="right")
+        if alerts_only and action == "IGNORE":
+            continue
+
+        filtered_rows.append(row)
+
+    return sorted(
+        filtered_rows,
+        key=lambda row: int(row.get("score") or 0),
+        reverse=True,
+    )
+
+
+def print_snapshot_table(
+    rows: list[dict],
+    alerts_only: bool = False,
+    min_score: int = 0,
+) -> None:
+    display_rows = filter_and_sort_rows(
+        rows=rows,
+        alerts_only=alerts_only,
+        min_score=min_score,
+    )
+
+    table = Table(title="Ranking de orderbooks")
+
+    table.add_column("#", justify="right", width=3)
+    table.add_column("Score", justify="right", width=5)
+    table.add_column("Grade", justify="center", width=5)
+    table.add_column("Action", width=14)
+    table.add_column("Outcome", width=7)
+    table.add_column("Bid", justify="right", width=7)
+    table.add_column("Ask", justify="right", width=7)
+    table.add_column("Spread", justify="right", width=7)
+    table.add_column("TopLiq", justify="right", width=8)
     table.add_column("Pregunta", overflow="fold")
-    table.add_column("Outcome")
-    table.add_column("Bid", justify="right")
-    table.add_column("Ask", justify="right")
-    table.add_column("Spread", justify="right")
-    table.add_column("Mid", justify="right")
-    table.add_column("Top Liq", justify="right")
-    table.add_column("Señal")
-    table.add_column("Score", justify="right")
-    table.add_column("Grade", justify="center")
-    table.add_column("Action")
 
-    for idx, row in enumerate(display_rows[:30], start=1):
+    for idx, row in enumerate(display_rows[:25], start=1):
         table.add_row(
             str(idx),
-            str(row.get("question", ""))[:55],
+            str(row.get("score", "")),
+            str(row.get("grade", "")),
+            str(row.get("action", "")),
             str(row.get("outcome", "")),
             str(row.get("best_bid", "")),
             str(row.get("best_ask", "")),
             str(row.get("spread", "")),
-            str(row.get("mid_price", "")),
             str(row.get("top_liquidity", "")),
-            str(row.get("signal", "")),
-            str(row.get("score", "")),
-            str(row.get("grade", "")),
-            str(row.get("action", "")),
+            str(row.get("question", ""))[:80],
         )
 
     console.print(table)
@@ -71,7 +98,11 @@ def run_snapshot(args: argparse.Namespace) -> None:
     snapshot_path = DATA_DIR / "orderbook_snapshot.csv"
     save_snapshot(rows, snapshot_path, append=False)
 
-    print_snapshot_table(rows, alerts_only=args.alerts)
+    print_snapshot_table(
+        rows,
+        alerts_only=args.alerts,
+        min_score=args.min_score,
+    )
 
     console.print(f"\n[green]Snapshot guardado en:[/green] {snapshot_path}")
     console.print(f"[green]Filas obtenidas:[/green] {len(rows)}")
@@ -97,7 +128,13 @@ def run_scan(args: argparse.Namespace) -> None:
 
             if rows:
                 save_snapshot(rows, history_path, append=True)
-                print_snapshot_table(rows, alerts_only=args.alerts)
+
+                print_snapshot_table(
+                    rows,
+                    alerts_only=args.alerts,
+                    min_score=args.min_score,
+                )
+
                 console.print(f"[green]Historial actualizado:[/green] {history_path}")
                 console.print(f"[green]Filas agregadas:[/green] {len(rows)}")
             else:
@@ -122,7 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--event-limit", type=int, default=20)
     snapshot.add_argument("--market-limit", type=int, default=10)
     snapshot.add_argument("--request-delay", type=float, default=0.25)
-    snapshot.add_argument("--alerts", action="store_true", help="Muestra solo señales WATCH.")
+    snapshot.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
+    snapshot.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
     snapshot.set_defaults(func=run_snapshot)
 
     scan = subparsers.add_parser("scan", help="Ejecuta scanner continuo.")
@@ -131,7 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--request-delay", type=float, default=0.25)
     scan.add_argument("--interval", type=int, default=30)
     scan.add_argument("--cycles", type=int, default=5)
-    scan.add_argument("--alerts", action="store_true", help="Muestra solo señales WATCH.")
+    scan.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
+    scan.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
     scan.set_defaults(func=run_scan)
 
     return parser
