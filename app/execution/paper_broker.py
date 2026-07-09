@@ -20,13 +20,21 @@ def estimate_shares(usdc_amount: float, price: float) -> float:
     return round(usdc_amount / price, 4)
 
 
+def calc_relative_spread_pct(spread: float, ask: float) -> float:
+    if ask <= 0:
+        return 999.0
+
+    return round((spread / ask) * 100, 2)
+
+
 def should_paper_buy(
     row: dict[str, Any],
     min_score: int = 75,
     allowed_actions: set[str] | None = None,
-    min_entry_price: float = 0.02,
-    max_entry_price: float = 0.95,
+    min_entry_price: float = 0.05,
+    max_entry_price: float = 0.90,
     min_top_liquidity: float = 10.0,
+    max_relative_spread_pct: float = 10.0,
 ) -> bool:
     if allowed_actions is None:
         allowed_actions = {"PRIORITY_WATCH", "WATCH"}
@@ -34,7 +42,10 @@ def should_paper_buy(
     score = int(row.get("score") or 0)
     action = str(row.get("action") or "")
     ask = float(row.get("best_ask") or 0)
+    spread = float(row.get("spread") or 0)
     top_liquidity = float(row.get("top_liquidity") or 0)
+
+    rel_spread = calc_relative_spread_pct(spread, ask)
 
     if score < min_score:
         return False
@@ -49,6 +60,9 @@ def should_paper_buy(
         return False
 
     if top_liquidity < min_top_liquidity:
+        return False
+
+    if rel_spread > max_relative_spread_pct:
         return False
 
     return True
@@ -77,6 +91,7 @@ def create_paper_buy(
         "action": row.get("action", ""),
         "spread": row.get("spread", ""),
         "top_liquidity": row.get("top_liquidity", ""),
+        "relative_spread_pct": row.get("relative_spread_pct", ""),
         "observed_at": row.get("observed_at", ""),
     }
 
@@ -114,7 +129,7 @@ def sort_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda row: (
             int(row.get("score") or 0),
             float(row.get("top_liquidity") or 0),
-            -float(row.get("spread") or 999),
+            -float(row.get("relative_spread_pct") or 999),
         ),
         reverse=True,
     )
@@ -130,7 +145,8 @@ def generate_paper_buys(
     Genera compras simuladas con reglas básicas de riesgo:
     - No compra ambos lados del mismo mercado.
     - No abre otra posición si ya hay una abierta para la misma pregunta.
-    - Evita precios extremadamente cerca de 0 o 1.
+    - Evita precios demasiado cerca de 0 o 1.
+    - Evita spreads relativos demasiado caros.
     - Prioriza por score.
     """
     existing_open_questions = load_existing_open_questions() if avoid_duplicates else set()

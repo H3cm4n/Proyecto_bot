@@ -10,7 +10,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 def score_spread(spread: float) -> int:
     """
-    Puntúa qué tan barato es entrar al mercado.
+    Puntúa spread absoluto.
     Menor spread = mejor ejecución.
     """
     if spread <= 0:
@@ -32,6 +32,40 @@ def score_spread(spread: float) -> int:
         return 10
 
     return 0
+
+
+def relative_spread_pct(spread: float, ask: float) -> float:
+    """
+    Calcula el costo relativo de entrar al ask y salir al bid.
+    Ejemplo: spread 0.02 / ask 0.09 = 22.22%
+    """
+    if ask <= 0:
+        return 999.0
+
+    return round((spread / ask) * 100, 2)
+
+
+def relative_spread_penalty(relative_spread: float) -> int:
+    """
+    Penaliza mercados donde el spread relativo es demasiado alto.
+    Esto evita comprar mercados que parecen baratos pero nacen con drawdown fuerte.
+    """
+    if relative_spread <= 3:
+        return 0
+
+    if relative_spread <= 7:
+        return 5
+
+    if relative_spread <= 10:
+        return 10
+
+    if relative_spread <= 15:
+        return 20
+
+    if relative_spread <= 25:
+        return 30
+
+    return 45
 
 
 def score_liquidity(top_liquidity: float) -> int:
@@ -137,13 +171,18 @@ def score_orderbook_row(row: dict[str, Any]) -> dict[str, Any]:
     bid_size = safe_float(row.get("bid_size"))
     ask_size = safe_float(row.get("ask_size"))
     top_liquidity = safe_float(row.get("top_liquidity"))
+    best_ask = safe_float(row.get("best_ask"))
 
     spread_points = score_spread(spread)
     liquidity_points = score_liquidity(top_liquidity)
     price_zone_points = score_price_zone(mid_price)
     balance_points = score_book_balance(bid_size, ask_size)
 
-    total_score = spread_points + liquidity_points + price_zone_points + balance_points
+    rel_spread = relative_spread_pct(spread, best_ask)
+    rel_spread_penalty = relative_spread_penalty(rel_spread)
+
+    raw_score = spread_points + liquidity_points + price_zone_points + balance_points
+    total_score = max(0, min(100, raw_score - rel_spread_penalty))
 
     return {
         "score": total_score,
@@ -153,4 +192,6 @@ def score_orderbook_row(row: dict[str, Any]) -> dict[str, Any]:
         "liquidity_points": liquidity_points,
         "price_zone_points": price_zone_points,
         "balance_points": balance_points,
+        "relative_spread_pct": rel_spread,
+        "relative_spread_penalty": rel_spread_penalty,
     }
