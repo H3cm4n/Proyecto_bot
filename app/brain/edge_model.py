@@ -22,7 +22,7 @@ def load_history() -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        df = pd.read_csv(HISTORY_PATH)
+        df = pd.read_csv(HISTORY_PATH, dtype=str, on_bad_lines="skip")
     except pd.errors.ParserError:
         return pd.DataFrame()
 
@@ -39,11 +39,19 @@ def load_history() -> pd.DataFrame:
     return df
 
 
-def get_previous_observation(
+def get_reference_observation(
     history_df: pd.DataFrame,
     token_id: str,
     current_observed_at: str,
+    min_age_seconds: int = 120,
 ) -> dict[str, Any] | None:
+    """
+    Busca una observación anterior para comparar contra el precio actual.
+
+    Prioridad:
+    1. Una observación de al menos min_age_seconds atrás.
+    2. Si no existe, usa la observación previa más reciente.
+    """
     if history_df.empty or "token_id" not in history_df.columns:
         return None
 
@@ -70,6 +78,13 @@ def get_previous_observation(
 
     if token_history.empty:
         return None
+
+    if pd.notna(current_dt):
+        cutoff_dt = current_dt - pd.Timedelta(seconds=min_age_seconds)
+        older_history = token_history[token_history["observed_dt"] <= cutoff_dt]
+
+        if not older_history.empty:
+            return older_history.tail(1).to_dict("records")[0]
 
     return token_history.tail(1).to_dict("records")[0]
 
@@ -225,15 +240,19 @@ def compute_edge_score(
     }
 
 
-def attach_edge_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def attach_edge_scores(
+    rows: list[dict[str, Any]],
+    min_age_seconds: int = 120,
+) -> list[dict[str, Any]]:
     history_df = load_history()
     enriched_rows = []
 
     for row in rows:
-        previous_row = get_previous_observation(
+        previous_row = get_reference_observation(
             history_df=history_df,
             token_id=str(row.get("token_id", "")),
             current_observed_at=str(row.get("observed_at", "")),
+            min_age_seconds=min_age_seconds,
         )
 
         edge_data = compute_edge_score(row, previous_row)
