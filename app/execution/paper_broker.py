@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from app.risk.paper_limits import check_paper_risk_limits, load_paper_risk_state
+
 
 DATA_DIR = Path("data")
 PAPER_TRADES_PATH = DATA_DIR / "paper_trades.csv"
@@ -185,9 +187,15 @@ def generate_paper_buys(
     usdc_amount: float = 5.0,
     min_score: int = 75,
     avoid_duplicates: bool = True,
+    max_open_positions: int = 3,
+    max_total_exposure_usdc: float = 15.0,
+    max_new_trades_per_cycle: int = 1,
 ) -> list[dict[str, Any]]:
     existing_open_questions = load_existing_open_questions() if avoid_duplicates else set()
     opened_questions_this_run: set[str] = set()
+
+    risk_state = load_paper_risk_state()
+    new_trades_this_cycle = 0
 
     trades = []
 
@@ -203,11 +211,33 @@ def generate_paper_buys(
         if question in opened_questions_this_run:
             continue
 
-        if should_paper_buy(row, min_score=min_score):
-            trade = create_paper_buy(row, usdc_amount=usdc_amount)
-            trades.append(trade)
-            opened_questions_this_run.add(question)
-            existing_open_questions.add(question)
+        if not should_paper_buy(row, min_score=min_score):
+            continue
+
+        allowed, reason = check_paper_risk_limits(
+            state=risk_state,
+            new_trade_size_usdc=usdc_amount,
+            new_trades_this_cycle=new_trades_this_cycle,
+            max_open_positions=max_open_positions,
+            max_total_exposure_usdc=max_total_exposure_usdc,
+            max_new_trades_per_cycle=max_new_trades_per_cycle,
+        )
+
+        if not allowed:
+            break
+
+        trade = create_paper_buy(row, usdc_amount=usdc_amount)
+        trades.append(trade)
+
+        opened_questions_this_run.add(question)
+        existing_open_questions.add(question)
+
+        risk_state.open_positions += 1
+        risk_state.open_exposure_usdc = round(
+            risk_state.open_exposure_usdc + usdc_amount,
+            4,
+        )
+        new_trades_this_cycle += 1
 
     save_paper_trades(trades)
 
