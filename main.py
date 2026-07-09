@@ -10,6 +10,7 @@ from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
 from app.execution.paper_manager import evaluate_open_positions
+from app.brain.edge_model import attach_edge_scores
 from app.execution.paper_report import build_performance_report, save_performance_report
 
 console = Console()
@@ -57,6 +58,7 @@ def print_snapshot_table(
 
     table.add_column("#", justify="right", width=3)
     table.add_column("Score", justify="right", width=5)
+    table.add_column("Edge", justify="right", width=5)
     table.add_column("Grade", justify="center", width=5)
     table.add_column("Action", width=14)
     table.add_column("Outcome", width=7)
@@ -70,6 +72,7 @@ def print_snapshot_table(
         table.add_row(
             str(idx),
             str(row.get("score", "")),
+            str(row.get("edge_score", "")),
             str(row.get("grade", "")),
             str(row.get("action", "")),
             str(row.get("outcome", "")),
@@ -185,6 +188,7 @@ def maybe_run_paper_trading(args: argparse.Namespace, rows: list[dict]) -> None:
         rows=rows,
         usdc_amount=args.paper_size,
         min_score=args.paper_min_score,
+        min_edge_score=getattr(args, "paper_min_edge", 0),
         avoid_duplicates=True,
     )
 
@@ -204,6 +208,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
         market_limit=args.market_limit,
         request_delay=args.request_delay,
     )
+    rows = attach_edge_scores(rows)
 
     if not rows:
         console.print("[red]No se obtuvieron orderbooks.[/red]")
@@ -241,6 +246,7 @@ def run_scan(args: argparse.Namespace) -> None:
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
             )
+            rows = attach_edge_scores(rows)
 
             if rows:
                 save_snapshot(rows, history_path, append=True)
@@ -419,6 +425,7 @@ def run_cycle(args: argparse.Namespace) -> None:
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
             )
+            rows = attach_edge_scores(rows)
 
             if not rows:
                 console.print("[yellow]No se obtuvieron orderbooks en este ciclo.[/yellow]")
@@ -480,6 +487,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--paper", action="store_true", help="Activa compras simuladas.")
     parser.add_argument("--paper-size", type=float, default=5.0, help="Tamaño ficticio por trade en USDC.")
     parser.add_argument("--paper-min-score", type=int, default=75, help="Score mínimo para compra simulada.")
+    parser.add_argument("--paper-min-edge", type=int, default=0, help="Edge mínimo para compra simulada.")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -58,6 +58,7 @@ def calc_relative_spread_pct(spread: float, ask: float) -> float:
 def should_paper_buy(
     row: dict[str, Any],
     min_score: int = 75,
+    min_edge_score: int = 0,
     allowed_actions: set[str] | None = None,
     min_entry_price: float = 0.05,
     max_entry_price: float = 0.90,
@@ -68,6 +69,7 @@ def should_paper_buy(
         allowed_actions = {"PRIORITY_WATCH", "WATCH"}
 
     score = int(row.get("score") or 0)
+    edge_score = int(row.get("edge_score") or 0)
     action = str(row.get("action") or "")
     ask = float(row.get("best_ask") or 0)
     spread = float(row.get("spread") or 0)
@@ -76,6 +78,9 @@ def should_paper_buy(
     rel_spread = calc_relative_spread_pct(spread, ask)
 
     if score < min_score:
+        return False
+
+    if edge_score < min_edge_score:
         return False
 
     if action not in allowed_actions:
@@ -186,6 +191,7 @@ def generate_paper_buys(
     rows: list[dict[str, Any]],
     usdc_amount: float = 5.0,
     min_score: int = 75,
+    min_edge_score: int = 0,
     avoid_duplicates: bool = True,
     max_open_positions: int = 3,
     max_total_exposure_usdc: float = 15.0,
@@ -211,7 +217,7 @@ def generate_paper_buys(
         if question in opened_questions_this_run:
             continue
 
-        if not should_paper_buy(row, min_score=min_score):
+        if not should_paper_buy(row, min_score=min_score, min_edge_score=min_edge_score):
             continue
 
         allowed, reason = check_paper_risk_limits(
