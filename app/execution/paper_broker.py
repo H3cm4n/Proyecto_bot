@@ -8,6 +8,32 @@ import pandas as pd
 DATA_DIR = Path("data")
 PAPER_TRADES_PATH = DATA_DIR / "paper_trades.csv"
 
+PAPER_TRADE_COLUMNS = [
+    "paper_trade_id",
+    "created_at",
+    "status",
+    "side",
+    "question",
+    "outcome",
+    "token_id",
+    "entry_price",
+    "shares",
+    "notional_usdc",
+    "score",
+    "grade",
+    "action",
+    "spread",
+    "top_liquidity",
+    "relative_spread_pct",
+    "observed_at",
+    "closed_at",
+    "exit_price",
+    "exit_value_usdc",
+    "realized_pnl_usdc",
+    "realized_roi_pct",
+    "exit_reason",
+]
+
 
 def now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -93,7 +119,22 @@ def create_paper_buy(
         "top_liquidity": row.get("top_liquidity", ""),
         "relative_spread_pct": row.get("relative_spread_pct", ""),
         "observed_at": row.get("observed_at", ""),
+        "closed_at": "",
+        "exit_price": "",
+        "exit_value_usdc": "",
+        "realized_pnl_usdc": "",
+        "realized_roi_pct": "",
+        "exit_reason": "",
     }
+
+
+def normalize_trade_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    for column in PAPER_TRADE_COLUMNS:
+        if column not in df.columns:
+            df[column] = ""
+
+    extra_columns = [column for column in df.columns if column not in PAPER_TRADE_COLUMNS]
+    return df[PAPER_TRADE_COLUMNS + extra_columns]
 
 
 def load_existing_open_questions() -> set[str]:
@@ -115,12 +156,16 @@ def save_paper_trades(trades: list[dict[str, Any]]) -> None:
 
     DATA_DIR.mkdir(exist_ok=True)
 
-    df = pd.DataFrame(trades)
+    new_df = normalize_trade_dataframe(pd.DataFrame(trades))
 
     if PAPER_TRADES_PATH.exists():
-        df.to_csv(PAPER_TRADES_PATH, mode="a", header=False, index=False)
+        existing_df = pd.read_csv(PAPER_TRADES_PATH)
+        existing_df = normalize_trade_dataframe(existing_df)
+        output_df = pd.concat([existing_df, new_df], ignore_index=True)
     else:
-        df.to_csv(PAPER_TRADES_PATH, index=False)
+        output_df = new_df
+
+    output_df.to_csv(PAPER_TRADES_PATH, index=False)
 
 
 def sort_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -141,14 +186,6 @@ def generate_paper_buys(
     min_score: int = 75,
     avoid_duplicates: bool = True,
 ) -> list[dict[str, Any]]:
-    """
-    Genera compras simuladas con reglas básicas de riesgo:
-    - No compra ambos lados del mismo mercado.
-    - No abre otra posición si ya hay una abierta para la misma pregunta.
-    - Evita precios demasiado cerca de 0 o 1.
-    - Evita spreads relativos demasiado caros.
-    - Prioriza por score.
-    """
     existing_open_questions = load_existing_open_questions() if avoid_duplicates else set()
     opened_questions_this_run: set[str] = set()
 
