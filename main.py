@@ -401,6 +401,76 @@ def run_paper_report(args: argparse.Namespace) -> None:
     if report.get("has_data"):
         console.print(f"[green]Reporte guardado en:[/green] {output_path}")
 
+
+def run_cycle(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print(f"[bold yellow]Live trading:[/bold yellow] {settings.live_trading}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER CYCLE, sin wallet, sin compras reales")
+    console.print("[bold]Presiona Ctrl+C para detener.[/bold]\n")
+
+    history_path = DATA_DIR / "orderbook_history.csv"
+
+    try:
+        for cycle_number in range(1, args.cycles + 1):
+            console.print(f"\n[bold blue]Ciclo automático {cycle_number}/{args.cycles}[/bold blue]")
+
+            rows = collect_orderbook_snapshot(
+                event_limit=args.event_limit,
+                market_limit=args.market_limit,
+                request_delay=args.request_delay,
+            )
+
+            if not rows:
+                console.print("[yellow]No se obtuvieron orderbooks en este ciclo.[/yellow]")
+            else:
+                save_snapshot(rows, history_path, append=True)
+
+                print_snapshot_table(
+                    rows,
+                    alerts_only=args.alerts,
+                    min_score=args.min_score,
+                )
+
+                maybe_run_paper_trading(args, rows)
+
+                console.print(f"[green]Historial actualizado:[/green] {history_path}")
+                console.print(f"[green]Filas agregadas:[/green] {len(rows)}")
+
+            if args.portfolio:
+                portfolio_rows = mark_open_trades_to_market()
+                save_portfolio_snapshot(portfolio_rows)
+                print_portfolio_table(portfolio_rows)
+                console.print("[green]Snapshot de portfolio actualizado.[/green]")
+
+            if args.manage:
+                management_rows = evaluate_open_positions(
+                    stop_loss_pct=args.stop_loss,
+                    take_profit_pct=args.take_profit,
+                    close_positions=args.close,
+                )
+
+                print_paper_management_table(management_rows)
+
+                if args.close:
+                    console.print("[green]Archivo actualizado:[/green] data/paper_trades.csv")
+                else:
+                    console.print("[yellow]Modo revisión: no se cerró ninguna posición. Usa --close para aplicar cierres.[/yellow]")
+
+            if args.report:
+                report = build_performance_report()
+                output_path = save_performance_report(report)
+                print_performance_report(report)
+
+                if report.get("has_data"):
+                    console.print(f"[green]Reporte guardado en:[/green] {output_path}")
+
+            if cycle_number < args.cycles:
+                console.print(f"[blue]Esperando {args.interval} segundos...[/blue]")
+                time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Ciclo detenido por el usuario.[/yellow]")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -439,6 +509,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     paper_report = subparsers.add_parser("paper-report", help="Muestra performance de trades PAPER.")
     paper_report.set_defaults(func=run_paper_report)
+
+    cycle = subparsers.add_parser("cycle", help="Ejecuta scan + paper + portfolio + manager + report.")
+    add_common_args(cycle)
+    cycle.add_argument("--cycles", type=int, default=1)
+    cycle.add_argument("--interval", type=int, default=30)
+    cycle.add_argument("--portfolio", action="store_true", help="Valúa posiciones PAPER abiertas.")
+    cycle.add_argument("--manage", action="store_true", help="Evalúa stop-loss/take-profit en posiciones PAPER.")
+    cycle.add_argument("--close", action="store_true", help="Aplica cierres PAPER cuando se activen reglas.")
+    cycle.add_argument("--stop-loss", type=float, default=-20.0)
+    cycle.add_argument("--take-profit", type=float, default=25.0)
+    cycle.add_argument("--report", action="store_true", help="Genera reporte de performance PAPER.")
+    cycle.set_defaults(func=run_cycle)
 
     return parser
 
