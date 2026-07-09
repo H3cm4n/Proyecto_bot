@@ -36,6 +36,8 @@ python main.py portfolio
 python main.py paper-manage
 python main.py paper-manage --close
 python main.py paper-report
+```
+
 ## Seguridad
 
 Este proyecto todavía no debe usarse con dinero real.
