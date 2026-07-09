@@ -27,6 +27,10 @@ PAPER_TRADE_COLUMNS = [
     "spread",
     "top_liquidity",
     "relative_spread_pct",
+    "edge_score",
+    "edge_action",
+    "edge_mid_delta",
+    "edge_direction",
     "observed_at",
     "closed_at",
     "exit_price",
@@ -59,7 +63,9 @@ def should_paper_buy(
     row: dict[str, Any],
     min_score: int = 75,
     min_edge_score: int = 0,
+    min_edge_mid_delta: float = 0.005,
     allowed_actions: set[str] | None = None,
+    allowed_edge_actions: set[str] | None = None,
     min_entry_price: float = 0.05,
     max_entry_price: float = 0.90,
     min_top_liquidity: float = 10.0,
@@ -68,23 +74,36 @@ def should_paper_buy(
     if allowed_actions is None:
         allowed_actions = {"PRIORITY_WATCH", "WATCH"}
 
+    if allowed_edge_actions is None:
+        allowed_edge_actions = {"EDGE_BUY", "EDGE_WATCH"}
+
     score = int(row.get("score") or 0)
-    edge_score = int(row.get("edge_score") or 0)
     action = str(row.get("action") or "")
     ask = float(row.get("best_ask") or 0)
     spread = float(row.get("spread") or 0)
     top_liquidity = float(row.get("top_liquidity") or 0)
+
+    edge_score = int(row.get("edge_score") or 0)
+    edge_action = str(row.get("edge_action") or "")
+    edge_mid_delta = float(row.get("edge_mid_delta") or 0)
 
     rel_spread = calc_relative_spread_pct(spread, ask)
 
     if score < min_score:
         return False
 
-    if edge_score < min_edge_score:
-        return False
-
     if action not in allowed_actions:
         return False
+
+    if min_edge_score > 0:
+        if edge_score < min_edge_score:
+            return False
+
+        if edge_action not in allowed_edge_actions:
+            return False
+
+        if edge_mid_delta < min_edge_mid_delta:
+            return False
 
     if ask < min_entry_price:
         return False
@@ -125,6 +144,10 @@ def create_paper_buy(
         "spread": row.get("spread", ""),
         "top_liquidity": row.get("top_liquidity", ""),
         "relative_spread_pct": row.get("relative_spread_pct", ""),
+        "edge_score": row.get("edge_score", ""),
+        "edge_action": row.get("edge_action", ""),
+        "edge_mid_delta": row.get("edge_mid_delta", ""),
+        "edge_direction": row.get("edge_direction", ""),
         "observed_at": row.get("observed_at", ""),
         "closed_at": "",
         "exit_price": "",
@@ -180,6 +203,7 @@ def sort_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows,
         key=lambda row: (
             int(row.get("score") or 0),
+            int(row.get("edge_score") or 0),
             float(row.get("top_liquidity") or 0),
             -float(row.get("relative_spread_pct") or 999),
         ),
@@ -192,6 +216,7 @@ def generate_paper_buys(
     usdc_amount: float = 5.0,
     min_score: int = 75,
     min_edge_score: int = 0,
+    min_edge_mid_delta: float = 0.005,
     avoid_duplicates: bool = True,
     max_open_positions: int = 3,
     max_total_exposure_usdc: float = 15.0,
@@ -217,7 +242,12 @@ def generate_paper_buys(
         if question in opened_questions_this_run:
             continue
 
-        if not should_paper_buy(row, min_score=min_score, min_edge_score=min_edge_score):
+        if not should_paper_buy(
+            row,
+            min_score=min_score,
+            min_edge_score=min_edge_score,
+            min_edge_mid_delta=min_edge_mid_delta,
+        ):
             continue
 
         allowed, reason = check_paper_risk_limits(

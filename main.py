@@ -59,6 +59,7 @@ def print_snapshot_table(
     table.add_column("#", justify="right", width=3)
     table.add_column("Score", justify="right", width=5)
     table.add_column("Edge", justify="right", width=5)
+    table.add_column("ΔMid", justify="right", width=7)
     table.add_column("Grade", justify="center", width=5)
     table.add_column("Action", width=14)
     table.add_column("Outcome", width=7)
@@ -73,6 +74,7 @@ def print_snapshot_table(
             str(idx),
             str(row.get("score", "")),
             str(row.get("edge_score", "")),
+            str(row.get("edge_mid_delta", "")),
             str(row.get("grade", "")),
             str(row.get("action", "")),
             str(row.get("outcome", "")),
@@ -189,6 +191,7 @@ def maybe_run_paper_trading(args: argparse.Namespace, rows: list[dict]) -> None:
         usdc_amount=args.paper_size,
         min_score=args.paper_min_score,
         min_edge_score=getattr(args, "paper_min_edge", 0),
+        min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
         avoid_duplicates=True,
     )
 
@@ -488,6 +491,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--paper-size", type=float, default=5.0, help="Tamaño ficticio por trade en USDC.")
     parser.add_argument("--paper-min-score", type=int, default=75, help="Score mínimo para compra simulada.")
     parser.add_argument("--paper-min-edge", type=int, default=0, help="Edge mínimo para compra simulada.")
+    parser.add_argument("--paper-min-edge-delta", type=float, default=0.005, help="Delta mínimo de mid price para compra simulada.")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -10,6 +10,8 @@ HISTORY_PATH = DATA_DIR / "orderbook_history.csv"
 
 def safe_float(value: Any, default: float = 0.0) -> float:
     try:
+        if value == "":
+            return default
         return float(value)
     except (TypeError, ValueError):
         return default
@@ -19,7 +21,10 @@ def load_history() -> pd.DataFrame:
     if not HISTORY_PATH.exists():
         return pd.DataFrame()
 
-    df = pd.read_csv(HISTORY_PATH)
+    try:
+        df = pd.read_csv(HISTORY_PATH)
+    except pd.errors.ParserError:
+        return pd.DataFrame()
 
     if df.empty:
         return pd.DataFrame()
@@ -39,13 +44,12 @@ def get_previous_observation(
     token_id: str,
     current_observed_at: str,
 ) -> dict[str, Any] | None:
-    if history_df.empty:
+    if history_df.empty or "token_id" not in history_df.columns:
         return None
 
-    if "token_id" not in history_df.columns:
-        return None
-
-    token_history = history_df[history_df["token_id"].astype(str) == str(token_id)].copy()
+    token_history = history_df[
+        history_df["token_id"].astype(str) == str(token_id)
+    ].copy()
 
     if token_history.empty:
         return None
@@ -71,63 +75,72 @@ def get_previous_observation(
 
 
 def score_mid_momentum(mid_delta: float) -> int:
-    if mid_delta >= 0.03:
+    if mid_delta >= 0.04:
         return 45
 
+    if mid_delta >= 0.03:
+        return 38
+
     if mid_delta >= 0.02:
-        return 35
+        return 30
 
     if mid_delta >= 0.01:
-        return 25
+        return 22
 
     if mid_delta >= 0.005:
-        return 15
+        return 12
 
     if mid_delta > 0:
-        return 8
+        return 5
 
     if mid_delta == 0:
-        return 0
+        return -10
+
+    if mid_delta <= -0.04:
+        return -45
 
     if mid_delta <= -0.03:
-        return -35
+        return -38
 
     if mid_delta <= -0.02:
-        return -25
+        return -30
 
     if mid_delta <= -0.01:
-        return -15
+        return -22
 
-    return -8
+    return -12
 
 
-def score_liquidity_change(current_liquidity: float, previous_liquidity: float) -> tuple[int, float]:
+def score_liquidity_change(
+    current_liquidity: float,
+    previous_liquidity: float,
+) -> tuple[int, float]:
     if previous_liquidity <= 0:
         return 0, 0.0
 
     ratio = current_liquidity / previous_liquidity
 
-    if ratio >= 1.25:
-        return 15, round(ratio, 4)
+    if ratio >= 1.50:
+        return 12, round(ratio, 4)
 
-    if ratio >= 1.0:
-        return 10, round(ratio, 4)
+    if ratio >= 1.20:
+        return 8, round(ratio, 4)
 
-    if ratio >= 0.75:
-        return 5, round(ratio, 4)
+    if ratio >= 0.90:
+        return 4, round(ratio, 4)
 
-    if ratio >= 0.50:
-        return -5, round(ratio, 4)
+    if ratio >= 0.60:
+        return -4, round(ratio, 4)
 
-    return -15, round(ratio, 4)
+    return -12, round(ratio, 4)
 
 
 def score_execution_quality(relative_spread_pct: float) -> int:
     if relative_spread_pct <= 3:
-        return 15
+        return 12
 
     if relative_spread_pct <= 7:
-        return 8
+        return 5
 
     if relative_spread_pct <= 10:
         return 0
@@ -135,7 +148,10 @@ def score_execution_quality(relative_spread_pct: float) -> int:
     return -15
 
 
-def action_from_edge(edge_score: int) -> str:
+def action_from_edge(edge_score: int, mid_delta: float) -> str:
+    if mid_delta <= 0:
+        return "EDGE_AVOID"
+
     if edge_score >= 75:
         return "EDGE_BUY"
 
@@ -157,6 +173,7 @@ def compute_edge_score(
             "edge_score": 0,
             "edge_action": "NO_HISTORY",
             "edge_mid_delta": "",
+            "edge_direction": "UNKNOWN",
             "edge_liquidity_ratio": "",
             "edge_reason": "No hay historial previo para este token.",
         }
@@ -178,7 +195,7 @@ def compute_edge_score(
     )
     execution_points = score_execution_quality(relative_spread_pct)
 
-    raw_score = 40 + momentum_points + liquidity_points + execution_points
+    raw_score = 35 + momentum_points + liquidity_points + execution_points
     edge_score = max(0, min(100, raw_score))
 
     if mid_delta > 0:
@@ -188,23 +205,28 @@ def compute_edge_score(
     else:
         direction = "FLAT"
 
+    edge_action = action_from_edge(edge_score=edge_score, mid_delta=mid_delta)
+
     return {
         "edge_score": edge_score,
-        "edge_action": action_from_edge(edge_score),
+        "edge_action": edge_action,
         "edge_mid_delta": mid_delta,
+        "edge_direction": direction,
         "edge_liquidity_ratio": liquidity_ratio,
         "edge_reason": (
             f"direction={direction}; "
             f"mid_delta={mid_delta}; "
+            f"momentum_points={momentum_points}; "
             f"liquidity_ratio={liquidity_ratio}; "
-            f"relative_spread_pct={relative_spread_pct}"
+            f"liquidity_points={liquidity_points}; "
+            f"relative_spread_pct={relative_spread_pct}; "
+            f"execution_points={execution_points}"
         ),
     }
 
 
 def attach_edge_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     history_df = load_history()
-
     enriched_rows = []
 
     for row in rows:
