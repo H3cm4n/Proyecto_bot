@@ -111,16 +111,41 @@ def collect_orderbook_snapshot(
     return snapshot_rows
 
 
-def save_snapshot(rows: list[dict[str, Any]], path: Path, append: bool = False) -> None:
+def save_snapshot(rows: list[dict], path: Path, append: bool = False) -> None:
     """
-    Guarda filas en CSV.
-    Si append=True, agrega al historial sin borrar datos anteriores.
+    Guarda snapshots en CSV manteniendo un esquema estable.
+
+    Antes se hacía append directo, pero cuando agregamos columnas nuevas
+    como edge_score, edge_direction, etc., el CSV podía quedar con filas
+    de distinto tamaño. Eso rompe pandas al leer historial.
     """
+    if not rows:
+        return
+
     path.parent.mkdir(exist_ok=True)
 
-    df = pd.DataFrame(rows)
+    new_df = pd.DataFrame(rows)
 
     if append and path.exists():
-        df.to_csv(path, mode="a", header=False, index=False)
+        try:
+            existing_df = pd.read_csv(path, dtype=str, on_bad_lines="skip")
+        except Exception:
+            backup_path = path.with_suffix(".broken.csv")
+            path.rename(backup_path)
+            existing_df = pd.DataFrame()
+
+        all_columns = list(existing_df.columns)
+
+        for column in new_df.columns:
+            if column not in all_columns:
+                all_columns.append(column)
+
+        existing_df = existing_df.reindex(columns=all_columns)
+        new_df = new_df.reindex(columns=all_columns)
+
+        output_df = pd.concat([existing_df, new_df], ignore_index=True)
     else:
-        df.to_csv(path, index=False)
+        output_df = new_df
+
+    output_df.to_csv(path, index=False)
+
