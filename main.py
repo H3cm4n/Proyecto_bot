@@ -906,6 +906,153 @@ def run_watch_positions(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Vigilancia de posiciones detenida por el usuario.[/yellow]")
 
+
+def run_paper_supervisor(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER SUPERVISOR")
+    console.print("[yellow]Autopilot PAPER: vigila posiciones, actualiza reportes y genera propuestas.[/yellow]")
+    console.print("[yellow]No usa wallet. No ejecuta compras reales. No aprueba nuevas entradas sin humano.[/yellow]")
+
+    if args.close_paper:
+        console.print("[red]Cierre PAPER activado:[/red] puede cerrar posiciones PAPER por stop-loss/take-profit.")
+    else:
+        console.print("[cyan]Cierre PAPER desactivado:[/cyan] solo vigila salidas, no cierra posiciones.")
+
+    console.print("Presiona Ctrl+C para detener.\n")
+
+    history_path = Path("data") / "orderbook_history.csv"
+
+    try:
+        for cycle_number in range(1, args.cycles + 1):
+            console.print(f"\n[bold magenta]Supervisor cycle {cycle_number}/{args.cycles}[/bold magenta]")
+
+            state = load_paper_risk_state()
+            console.print(
+                f"[cyan]Riesgo PAPER:[/cyan] "
+                f"{state.open_positions}/3 posiciones abiertas | "
+                f"${state.open_exposure_usdc}/$15.0 expuesto"
+            )
+
+            if not args.no_portfolio:
+                portfolio_rows = mark_open_trades_to_market()
+
+                if portfolio_rows:
+                    print_portfolio_table(portfolio_rows)
+                    save_portfolio_snapshot(portfolio_rows)
+                    console.print("[green]Snapshot de portfolio actualizado.[/green]")
+                else:
+                    console.print("[yellow]No hay posiciones abiertas para valorar.[/yellow]")
+
+            management_rows = evaluate_open_positions(
+                stop_loss_pct=args.stop_loss,
+                take_profit_pct=args.take_profit,
+                close_positions=args.close_paper,
+            )
+
+            if management_rows:
+                print_paper_management_table(management_rows)
+
+                actionable = []
+
+                for row in management_rows:
+                    decision = (
+                        row.get("decision")
+                        or row.get("exit_decision")
+                        or row.get("exit_reason")
+                        or "HOLD"
+                    )
+
+                    decision = str(decision).upper()
+
+                    if decision not in {"", "NONE", "HOLD"}:
+                        actionable.append(row)
+
+                if actionable and args.close_paper:
+                    console.print("[green]Se aplicaron cierres PAPER según las reglas configuradas.[/green]")
+                elif actionable:
+                    console.print("[cyan]Hay posiciones que cumplen regla de salida, pero no se cerraron porque --close-paper no está activo.[/cyan]")
+                else:
+                    console.print("[green]Todas las posiciones siguen en HOLD.[/green]")
+            else:
+                console.print("[yellow]No hay posiciones abiertas para vigilar.[/yellow]")
+
+            if not args.no_report:
+                report = build_performance_report()
+                print_performance_report(report)
+                save_performance_report(report)
+                console.print("[green]Reporte PAPER actualizado.[/green]")
+
+            if not args.no_proposals:
+                console.print("\n[bold blue]Buscando nuevas oportunidades para propuesta...[/bold blue]")
+
+                rows = collect_orderbook_snapshot(
+                    event_limit=args.event_limit,
+                    market_limit=args.market_limit,
+                    request_delay=args.request_delay,
+                )
+
+                if not rows:
+                    console.print("[red]No se obtuvieron orderbooks.[/red]")
+                else:
+                    rows = attach_edge_scores(rows)
+
+                    print_snapshot_table(
+                        rows,
+                        alerts_only=args.alerts,
+                        min_score=args.min_score,
+                    )
+
+                    proposals = create_trade_proposals(
+                        rows=rows,
+                        usdc_amount=args.paper_size,
+                        min_score=args.paper_min_score,
+                        min_edge_score=getattr(args, "paper_min_edge", 0),
+                        min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+                        limit=getattr(args, "proposal_limit", 3),
+                        ttl_minutes=getattr(args, "proposal_ttl_minutes", 10),
+                    )
+
+                    print_trade_proposals_table(
+                        proposals,
+                        title="Nuevas propuestas PENDING_APPROVAL",
+                    )
+
+                    if proposals:
+                        console.print("[green]Propuestas guardadas en:[/green] data/trade_proposals.csv")
+                        console.print("[cyan]Lista pendientes con:[/cyan] python main.py proposals --status PENDING_APPROVAL")
+                        console.print("[cyan]Aprueba con:[/cyan] python main.py approve '<proposal_id>'")
+                    else:
+                        console.print("[yellow]No hubo propuestas elegibles en este ciclo.[/yellow]")
+
+                        if getattr(args, "audit_on_empty", False):
+                            audited_rows = audit_trade_rows(
+                                rows=rows,
+                                usdc_amount=args.paper_size,
+                                min_score=args.paper_min_score,
+                                min_edge_score=getattr(args, "paper_min_edge", 0),
+                                min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+                            )
+
+                            print_decision_audit_table(audited_rows)
+
+                    save_snapshot(rows, history_path, append=True)
+                    console.print("[green]Historial actualizado:[/green] data/orderbook_history.csv")
+                    console.print(f"Filas agregadas: {len(rows)}")
+
+            end_state = load_paper_risk_state()
+            console.print(
+                f"[bold cyan]Estado final ciclo:[/bold cyan] "
+                f"{end_state.open_positions}/3 posiciones abiertas | "
+                f"${end_state.open_exposure_usdc}/$15.0 expuesto"
+            )
+
+            if cycle_number < args.cycles:
+                console.print(f"[yellow]Esperando {args.interval} segundos...[/yellow]")
+                time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Paper supervisor detenido por el usuario.[/yellow]")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1007,6 +1154,21 @@ def build_parser() -> argparse.ArgumentParser:
     watch_positions.add_argument("--portfolio", action="store_true", help="Muestra valuación mark-to-market antes de gestionar.")
     watch_positions.add_argument("--report", action="store_true", help="Actualiza reporte de performance en cada ciclo.")
     watch_positions.set_defaults(func=run_watch_positions)
+
+    paper_supervisor = subparsers.add_parser("paper-supervisor", help="Autopilot PAPER: vigila posiciones, reporta y genera propuestas.")
+    add_common_args(paper_supervisor)
+    paper_supervisor.add_argument("--cycles", type=int, default=5, help="Número de ciclos del supervisor.")
+    paper_supervisor.add_argument("--interval", type=int, default=60, help="Segundos entre ciclos.")
+    paper_supervisor.add_argument("--stop-loss", type=float, default=-20.0, help="ROI porcentual para stop-loss PAPER.")
+    paper_supervisor.add_argument("--take-profit", type=float, default=25.0, help="ROI porcentual para take-profit PAPER.")
+    paper_supervisor.add_argument("--close-paper", action="store_true", help="Cierra posiciones PAPER si cumplen stop-loss/take-profit.")
+    paper_supervisor.add_argument("--proposal-limit", type=int, default=3, help="Máximo de propuestas nuevas por ciclo.")
+    paper_supervisor.add_argument("--proposal-ttl-minutes", type=int, default=10, help="Minutos antes de expirar una propuesta.")
+    paper_supervisor.add_argument("--audit-on-empty", action="store_true", help="Muestra auditoría si no hay propuestas.")
+    paper_supervisor.add_argument("--no-proposals", action="store_true", help="Desactiva generación de propuestas.")
+    paper_supervisor.add_argument("--no-portfolio", action="store_true", help="No muestra portfolio mark-to-market.")
+    paper_supervisor.add_argument("--no-report", action="store_true", help="No actualiza reporte PAPER.")
+    paper_supervisor.set_defaults(func=run_paper_supervisor)
 
     return parser
 
