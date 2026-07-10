@@ -840,10 +840,20 @@ def run_watch_positions(args: argparse.Namespace) -> None:
             else:
                 print_paper_management_table(management_rows)
 
-                actionable = [
-                    row for row in management_rows
-                    if str(row.get("decision", "")).upper() != "HOLD"
-                ]
+                actionable = []
+
+                for row in management_rows:
+                    decision = (
+                        row.get("decision")
+                        or row.get("exit_decision")
+                        or row.get("exit_reason")
+                        or "HOLD"
+                    )
+
+                    decision = str(decision).upper()
+
+                    if decision not in {"", "NONE", "HOLD"}:
+                        actionable.append(row)
 
                 if actionable and args.close_paper:
                     console.print("[green]Se aplicaron cierres PAPER según las reglas configuradas.[/green]")
