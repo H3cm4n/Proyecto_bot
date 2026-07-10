@@ -342,13 +342,8 @@ def run_paper_manage(args: argparse.Namespace) -> None:
 
 
 def print_performance_report(report: dict) -> None:
-    if not report.get("has_data"):
-        console.print(f"[yellow]{report.get('message', 'No hay datos PAPER.')}[/yellow]")
-        return
-
-    if report.get("closed_trades", 0) == 0:
-        console.print(f"[yellow]{report.get('message', 'No hay trades cerrados.')}[/yellow]")
-        console.print(f"[bold]Trades abiertos:[/bold] {report.get('open_trades', 0)}")
+    if report.get("message"):
+        console.print(f"[yellow]{report.get('message')}[/yellow]")
         return
 
     table = Table(title="Reporte de performance PAPER")
@@ -356,50 +351,86 @@ def print_performance_report(report: dict) -> None:
     table.add_column("Métrica")
     table.add_column("Valor", justify="right")
 
-    table.add_row("Trades cerrados", str(report.get("closed_trades", 0)))
-    table.add_row("Trades abiertos", str(report.get("open_trades", 0)))
-    table.add_row("Capital invertido", f"${report.get('total_invested', 0)}")
-    table.add_row("PnL total", f"${report.get('total_pnl', 0)}")
-    table.add_row("ROI total", f"{report.get('total_roi_pct', 0)}%")
-    table.add_row("Winrate", f"{report.get('winrate_pct', 0)}%")
-    table.add_row("Loss rate", f"{report.get('loss_rate_pct', 0)}%")
-    table.add_row("ROI promedio", f"{report.get('avg_roi_pct', 0)}%")
-    table.add_row("Wins", str(report.get("wins", 0)))
-    table.add_row("Losses", str(report.get("losses", 0)))
-    table.add_row("Breakeven", str(report.get("breakeven", 0)))
+    table.add_row("Trades cerrados", str(report.get("closed_trade_count", 0)))
+    table.add_row("Trades abiertos", str(report.get("open_trade_count", 0)))
+    table.add_row("Capital cerrado", f"${report.get('closed_invested_usdc', 0)}")
+    table.add_row("PnL realizado", f"${report.get('closed_pnl_usdc', 0)}")
+    table.add_row("ROI realizado", f"{report.get('closed_roi_pct', 0)}%")
+    table.add_row("Exposición abierta", f"${report.get('open_exposure_usdc', 0)}")
+    table.add_row("Valor abierto @ bid", f"${report.get('open_value_bid_usdc', 0)}")
+    table.add_row("PnL no realizado @ bid", f"${report.get('open_unrealized_pnl_bid_usdc', 0)}")
+    table.add_row("ROI no realizado @ bid", f"{report.get('open_unrealized_roi_bid_pct', 0)}%")
+    table.add_row("Capital total desplegado", f"${report.get('total_deployed_usdc', 0)}")
+    table.add_row("PnL total PAPER", f"${report.get('total_paper_pnl_usdc', 0)}")
+    table.add_row("ROI total PAPER", f"{report.get('total_paper_roi_pct', 0)}%")
+    table.add_row("Winrate cerrado", f"{report.get('winrate_pct', 0)}%")
+    table.add_row("Loss rate cerrado", f"{report.get('loss_rate_pct', 0)}%")
+    table.add_row("ROI promedio cerrado", f"{report.get('avg_closed_roi_pct', 0)}%")
+    table.add_row("Wins cerrados", str(report.get("wins", 0)))
+    table.add_row("Losses cerrados", str(report.get("losses", 0)))
+    table.add_row("Breakeven cerrados", str(report.get("breakeven", 0)))
 
     console.print(table)
 
-    exit_counts = report.get("exit_reason_counts", {})
-    if exit_counts:
-        reason_table = Table(title="Motivos de salida")
-        reason_table.add_column("Motivo")
-        reason_table.add_column("Cantidad", justify="right")
+    exit_reason_counts = report.get("exit_reason_counts", {})
 
-        for reason, count in exit_counts.items():
-            reason_table.add_row(str(reason), str(count))
+    if exit_reason_counts:
+        reasons_table = Table(title="Motivos de salida")
 
-        console.print(reason_table)
+        reasons_table.add_column("Motivo")
+        reasons_table.add_column("Cantidad", justify="right")
 
-    best_trade = report.get("best_trade", {})
-    worst_trade = report.get("worst_trade", {})
+        for reason, count in exit_reason_counts.items():
+            reasons_table.add_row(str(reason), str(count))
 
-    console.print("[bold green]Mejor trade:[/bold green]")
-    console.print(
-        f"{best_trade.get('outcome', '')} | "
-        f"PnL: ${best_trade.get('realized_pnl_usdc', '')} | "
-        f"ROI: {best_trade.get('realized_roi_pct', '')}% | "
-        f"{str(best_trade.get('question', ''))[:100]}"
-    )
+        console.print(reasons_table)
 
-    console.print("[bold red]Peor trade:[/bold red]")
-    console.print(
-        f"{worst_trade.get('outcome', '')} | "
-        f"PnL: ${worst_trade.get('realized_pnl_usdc', '')} | "
-        f"ROI: {worst_trade.get('realized_roi_pct', '')}% | "
-        f"{str(worst_trade.get('question', ''))[:100]}"
-    )
+    open_positions = report.get("open_positions", [])
 
+    if open_positions:
+        open_table = Table(title="Posiciones abiertas PAPER")
+
+        open_table.add_column("#", justify="right")
+        open_table.add_column("Outcome")
+        open_table.add_column("Entry", justify="right")
+        open_table.add_column("Bid", justify="right")
+        open_table.add_column("PnL", justify="right")
+        open_table.add_column("ROI%", justify="right")
+        open_table.add_column("Pregunta", overflow="fold")
+
+        for idx, row in enumerate(open_positions, start=1):
+            open_table.add_row(
+                str(idx),
+                str(row.get("outcome", "")),
+                str(row.get("entry_price", "")),
+                str(row.get("current_bid", "")),
+                str(row.get("pnl_bid", "")),
+                str(row.get("roi_bid_pct", "")),
+                str(row.get("question", ""))[:80],
+            )
+
+        console.print(open_table)
+
+    best_trade = report.get("best_trade")
+    worst_trade = report.get("worst_trade")
+
+    if best_trade:
+        console.print("[green]Mejor trade cerrado:[/green]")
+        console.print(
+            f"{best_trade.get('outcome')} | "
+            f"PnL: ${best_trade.get('realized_pnl_usdc')} | "
+            f"ROI: {best_trade.get('realized_roi_pct')}% | "
+            f"{best_trade.get('question')}"
+        )
+
+    if worst_trade:
+        console.print("[red]Peor trade cerrado:[/red]")
+        console.print(
+            f"{worst_trade.get('outcome')} | "
+            f"PnL: ${worst_trade.get('realized_pnl_usdc')} | "
+            f"ROI: {worst_trade.get('realized_roi_pct')}% | "
+            f"{worst_trade.get('question')}"
+        )
 
 def run_paper_report(args: argparse.Namespace) -> None:
     console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
