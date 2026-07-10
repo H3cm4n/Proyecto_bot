@@ -15,6 +15,7 @@ from app.brain.decision_audit import audit_trade_rows
 from app.brain.trade_proposals import approve_trade_proposal, create_trade_proposals, list_trade_proposals, reject_trade_proposal
 from app.risk.paper_limits import load_paper_risk_state
 from app.execution.paper_report import build_performance_report, save_performance_report
+from app.monitoring.supervisor_journal import load_supervisor_journal, save_supervisor_journal_entry
 
 console = Console()
 DATA_DIR = Path("data")
@@ -926,6 +927,12 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
         for cycle_number in range(1, args.cycles + 1):
             console.print(f"\n[bold magenta]Supervisor cycle {cycle_number}/{args.cycles}[/bold magenta]")
 
+            cycle_status = "OK"
+            cycle_notes = []
+            orderbook_rows_scanned = 0
+            proposals_created = 0
+            report = None
+
             state = load_paper_risk_state()
             console.print(
                 f"[cyan]Riesgo PAPER:[/cyan] "
@@ -993,7 +1000,10 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
 
                 if not rows:
                     console.print("[red]No se obtuvieron orderbooks.[/red]")
+                    cycle_status = "WARN"
+                    cycle_notes.append("No se obtuvieron orderbooks.")
                 else:
+                    orderbook_rows_scanned = len(rows)
                     rows = attach_edge_scores(rows)
 
                     print_snapshot_table(
@@ -1011,6 +1021,8 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                         limit=getattr(args, "proposal_limit", 3),
                         ttl_minutes=getattr(args, "proposal_ttl_minutes", 10),
                     )
+
+                    proposals_created = len(proposals)
 
                     print_trade_proposals_table(
                         proposals,
@@ -1046,12 +1058,86 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                 f"${end_state.open_exposure_usdc}/$15.0 expuesto"
             )
 
+            if not args.no_journal:
+                if report is None:
+                    try:
+                        report = build_performance_report()
+                    except Exception as exc:
+                        report = {}
+                        cycle_status = "WARN"
+                        cycle_notes.append(f"No se pudo construir reporte para journal: {exc}")
+
+                save_supervisor_journal_entry(
+                    {
+                        "cycle_number": cycle_number,
+                        "open_positions": end_state.open_positions,
+                        "open_exposure_usdc": end_state.open_exposure_usdc,
+                        "closed_pnl_usdc": report.get("closed_pnl_usdc", ""),
+                        "open_unrealized_pnl_bid_usdc": report.get("open_unrealized_pnl_bid_usdc", ""),
+                        "total_paper_pnl_usdc": report.get("total_paper_pnl_usdc", ""),
+                        "total_paper_roi_pct": report.get("total_paper_roi_pct", ""),
+                        "proposals_created": proposals_created,
+                        "orderbook_rows_scanned": orderbook_rows_scanned,
+                        "status": cycle_status,
+                        "notes": " | ".join(cycle_notes),
+                    }
+                )
+
+                console.print("[green]Supervisor journal actualizado:[/green] data/supervisor_journal.csv")
+
             if cycle_number < args.cycles:
                 console.print(f"[yellow]Esperando {args.interval} segundos...[/yellow]")
                 time.sleep(args.interval)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Paper supervisor detenido por el usuario.[/yellow]")
+
+
+def print_supervisor_journal(rows: list[dict]) -> None:
+    if not rows:
+        console.print("[yellow]No hay entradas en data/supervisor_journal.csv[/yellow]")
+        return
+
+    table = Table(title="Supervisor Journal")
+
+    table.add_column("#", justify="right")
+    table.add_column("Time")
+    table.add_column("Cycle", justify="right")
+    table.add_column("Open", justify="right")
+    table.add_column("Exposure", justify="right")
+    table.add_column("Unrealized", justify="right")
+    table.add_column("Total PnL", justify="right")
+    table.add_column("ROI%", justify="right")
+    table.add_column("Props", justify="right")
+    table.add_column("Rows", justify="right")
+    table.add_column("Status")
+    table.add_column("Notes", overflow="fold")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("observed_at", "")),
+            str(row.get("cycle_number", "")),
+            str(row.get("open_positions", "")),
+            f"${row.get('open_exposure_usdc', '')}",
+            f"${row.get('open_unrealized_pnl_bid_usdc', '')}",
+            f"${row.get('total_paper_pnl_usdc', '')}",
+            str(row.get("total_paper_roi_pct", "")),
+            str(row.get("proposals_created", "")),
+            str(row.get("orderbook_rows_scanned", "")),
+            str(row.get("status", "")),
+            str(row.get("notes", "")),
+        )
+
+    console.print(table)
+
+
+def run_supervisor_journal(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] SUPERVISOR JOURNAL")
+
+    rows = load_supervisor_journal(tail=args.tail)
+    print_supervisor_journal(rows)
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
@@ -1168,7 +1254,12 @@ def build_parser() -> argparse.ArgumentParser:
     paper_supervisor.add_argument("--no-proposals", action="store_true", help="Desactiva generación de propuestas.")
     paper_supervisor.add_argument("--no-portfolio", action="store_true", help="No muestra portfolio mark-to-market.")
     paper_supervisor.add_argument("--no-report", action="store_true", help="No actualiza reporte PAPER.")
+    paper_supervisor.add_argument("--no-journal", action="store_true", help="No guarda data/supervisor_journal.csv.")
     paper_supervisor.set_defaults(func=run_paper_supervisor)
+
+    supervisor_journal = subparsers.add_parser("supervisor-journal", help="Muestra últimas entradas del supervisor journal.")
+    supervisor_journal.add_argument("--tail", type=int, default=10, help="Número de entradas recientes a mostrar.")
+    supervisor_journal.set_defaults(func=run_supervisor_journal)
 
     return parser
 
