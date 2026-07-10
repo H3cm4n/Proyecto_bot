@@ -12,6 +12,7 @@ from app.execution.paper_portfolio import mark_open_trades_to_market, save_portf
 from app.execution.paper_manager import evaluate_open_positions
 from app.brain.edge_model import attach_edge_scores
 from app.brain.decision_audit import audit_trade_rows
+from app.brain.trade_proposals import approve_trade_proposal, create_trade_proposals, list_trade_proposals, reject_trade_proposal
 from app.execution.paper_report import build_performance_report, save_performance_report
 
 console = Console()
@@ -550,6 +551,137 @@ def run_audit(args: argparse.Namespace) -> None:
 
     print_decision_audit_table(audited_rows)
 
+
+def print_trade_proposals_table(rows: list[dict], title: str = "Propuestas de trade PAPER") -> None:
+    if not rows:
+        console.print("[yellow]No hay propuestas para mostrar.[/yellow]")
+        return
+
+    table = Table(title=title)
+
+    table.add_column("#", justify="right")
+    table.add_column("Status")
+    table.add_column("ID", overflow="fold")
+    table.add_column("Score", justify="right")
+    table.add_column("Edge", justify="right")
+    table.add_column("ΔMid", justify="right")
+    table.add_column("Outcome")
+    table.add_column("Entry", justify="right")
+    table.add_column("USDC", justify="right")
+    table.add_column("Pregunta", overflow="fold")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("status", "")),
+            str(row.get("proposal_id", "")),
+            str(row.get("score", "")),
+            str(row.get("edge_score", "")),
+            str(row.get("edge_mid_delta", "")),
+            str(row.get("outcome", "")),
+            str(row.get("proposed_entry_price", "")),
+            str(row.get("usdc_amount", "")),
+            str(row.get("question", ""))[:80],
+        )
+
+    console.print(table)
+
+
+def run_propose(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER PROPOSAL MODE, sin wallet, sin compras automáticas")
+
+    rows = collect_orderbook_snapshot(
+        event_limit=args.event_limit,
+        market_limit=args.market_limit,
+        request_delay=args.request_delay,
+    )
+
+    if not rows:
+        console.print("[red]No se obtuvieron orderbooks.[/red]")
+        return
+
+    rows = attach_edge_scores(rows)
+
+    print_snapshot_table(
+        rows,
+        alerts_only=args.alerts,
+        min_score=args.min_score,
+    )
+
+    proposals = create_trade_proposals(
+        rows=rows,
+        usdc_amount=args.paper_size,
+        min_score=args.paper_min_score,
+        min_edge_score=getattr(args, "paper_min_edge", 0),
+        min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+        limit=getattr(args, "proposal_limit", 3),
+        ttl_minutes=getattr(args, "proposal_ttl_minutes", 10),
+    )
+
+    print_trade_proposals_table(proposals, title="Nuevas propuestas PENDING_APPROVAL")
+
+    if proposals:
+        console.print("[green]Propuestas guardadas en:[/green] data/trade_proposals.csv")
+        console.print("[cyan]Aprueba con:[/cyan] python main.py approve '<proposal_id>'")
+    else:
+        console.print("[yellow]No hubo propuestas elegibles. El bot decidió esperar.[/yellow]")
+        console.print("[cyan]Mostrando auditoría de candidatos rechazados:[/cyan]")
+
+        audited_rows = audit_trade_rows(
+            rows=rows,
+            usdc_amount=args.paper_size,
+            min_score=args.paper_min_score,
+            min_edge_score=getattr(args, "paper_min_edge", 0),
+            min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+        )
+
+        print_decision_audit_table(audited_rows)
+
+
+def run_proposals(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER PROPOSALS LIST")
+
+    status = getattr(args, "status", "") or None
+    proposals = list_trade_proposals(status=status)
+    print_trade_proposals_table(proposals)
+
+
+def run_approve(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER APPROVAL, sin wallet, sin compras reales")
+
+    result = approve_trade_proposal(
+        proposal_id=args.proposal_id,
+        max_price_slippage=args.max_price_slippage,
+    )
+
+    if result.get("ok"):
+        console.print(f"[green]{result.get('message')}[/green]")
+        console.print(f"Mercado: {result.get('question')}")
+        console.print(f"Outcome: {result.get('outcome')}")
+        console.print(f"Execution price: {result.get('execution_price')}")
+        console.print(f"Paper trade id: {result.get('paper_trade_id')}")
+    else:
+        console.print(f"[red]{result.get('message')}[/red]")
+
+
+def run_reject(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER REJECT PROPOSAL")
+
+    result = reject_trade_proposal(
+        proposal_id=args.proposal_id,
+        reason=args.reason,
+    )
+
+    if result.get("ok"):
+        console.print(f"[green]{result.get('message')}[/green]")
+        console.print(f"Razón: {result.get('reason')}")
+    else:
+        console.print(f"[red]{result.get('message')}[/red]")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -606,6 +738,26 @@ def build_parser() -> argparse.ArgumentParser:
     audit = subparsers.add_parser("audit", help="Explica por qué el bot aceptaría o rechazaría candidatos PAPER.")
     add_common_args(audit)
     audit.set_defaults(func=run_audit)
+
+    propose = subparsers.add_parser("propose", help="Genera propuestas PAPER que requieren aprobación humana.")
+    add_common_args(propose)
+    propose.add_argument("--proposal-limit", type=int, default=3, help="Máximo de propuestas nuevas.")
+    propose.add_argument("--proposal-ttl-minutes", type=int, default=10, help="Minutos antes de expirar una propuesta.")
+    propose.set_defaults(func=run_propose)
+
+    proposals = subparsers.add_parser("proposals", help="Lista propuestas PAPER.")
+    proposals.add_argument("--status", default="", help="Filtra por status, por ejemplo PENDING_APPROVAL.")
+    proposals.set_defaults(func=run_proposals)
+
+    approve = subparsers.add_parser("approve", help="Aprueba una propuesta y la ejecuta como PAPER.")
+    approve.add_argument("proposal_id", help="ID de la propuesta a aprobar.")
+    approve.add_argument("--max-price-slippage", type=float, default=0.02, help="Movimiento máximo permitido contra el precio propuesto.")
+    approve.set_defaults(func=run_approve)
+
+    reject = subparsers.add_parser("reject", help="Rechaza una propuesta PAPER.")
+    reject.add_argument("proposal_id", help="ID de la propuesta a rechazar.")
+    reject.add_argument("--reason", default="Rejected by human.", help="Razón del rechazo.")
+    reject.set_defaults(func=run_reject)
 
     return parser
 
