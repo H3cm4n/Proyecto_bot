@@ -721,6 +721,88 @@ def run_risk_status(args: argparse.Namespace) -> None:
     else:
         console.print("[yellow]Riesgo limitado:[/yellow] el bot no debería abrir nuevas posiciones PAPER con el tamaño default.")
 
+
+def run_proposal_cycle(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER PROPOSAL CYCLE, sin wallet, sin compras automáticas")
+    console.print("[yellow]El bot generará propuestas, pero NO ejecutará trades sin aprobación humana.[/yellow]")
+    console.print("Presiona Ctrl+C para detener.\n")
+
+    history_path = Path("data") / "orderbook_history.csv"
+
+    try:
+        for cycle_number in range(1, args.cycles + 1):
+            console.print(f"\n[bold magenta]Ciclo de propuestas {cycle_number}/{args.cycles}[/bold magenta]")
+
+            state = load_paper_risk_state()
+            console.print(
+                f"[cyan]Riesgo PAPER:[/cyan] "
+                f"{state.open_positions}/3 posiciones abiertas | "
+                f"${state.open_exposure_usdc}/$15.0 expuesto"
+            )
+
+            rows = collect_orderbook_snapshot(
+                event_limit=args.event_limit,
+                market_limit=args.market_limit,
+                request_delay=args.request_delay,
+            )
+
+            if not rows:
+                console.print("[red]No se obtuvieron orderbooks.[/red]")
+                continue
+
+            rows = attach_edge_scores(rows)
+
+            print_snapshot_table(
+                rows,
+                alerts_only=args.alerts,
+                min_score=args.min_score,
+            )
+
+            proposals = create_trade_proposals(
+                rows=rows,
+                usdc_amount=args.paper_size,
+                min_score=args.paper_min_score,
+                min_edge_score=getattr(args, "paper_min_edge", 0),
+                min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+                limit=getattr(args, "proposal_limit", 3),
+                ttl_minutes=getattr(args, "proposal_ttl_minutes", 10),
+            )
+
+            print_trade_proposals_table(
+                proposals,
+                title="Nuevas propuestas PENDING_APPROVAL",
+            )
+
+            if proposals:
+                console.print("[green]Propuestas guardadas en:[/green] data/trade_proposals.csv")
+                console.print("[cyan]Lista pendientes con:[/cyan] python main.py proposals --status PENDING_APPROVAL")
+                console.print("[cyan]Aprueba con:[/cyan] python main.py approve '<proposal_id>'")
+            else:
+                console.print("[yellow]No hubo propuestas elegibles en este ciclo.[/yellow]")
+
+                if getattr(args, "audit_on_empty", False):
+                    audited_rows = audit_trade_rows(
+                        rows=rows,
+                        usdc_amount=args.paper_size,
+                        min_score=args.paper_min_score,
+                        min_edge_score=getattr(args, "paper_min_edge", 0),
+                        min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+                    )
+
+                    print_decision_audit_table(audited_rows)
+
+            save_snapshot(rows, history_path, append=True)
+            console.print("[green]Historial actualizado:[/green] data/orderbook_history.csv")
+            console.print(f"Filas agregadas: {len(rows)}")
+
+            if cycle_number < args.cycles:
+                console.print(f"[yellow]Esperando {args.interval} segundos...[/yellow]")
+                time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Proposal cycle detenido por el usuario.[/yellow]")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -803,6 +885,15 @@ def build_parser() -> argparse.ArgumentParser:
     risk_status.add_argument("--max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas PAPER.")
     risk_status.add_argument("--max-total-exposure-usdc", type=float, default=15.0, help="Exposición máxima PAPER.")
     risk_status.set_defaults(func=run_risk_status)
+
+    proposal_cycle = subparsers.add_parser("proposal-cycle", help="Genera propuestas PAPER de forma recurrente sin ejecutar trades.")
+    add_common_args(proposal_cycle)
+    proposal_cycle.add_argument("--cycles", type=int, default=5, help="Número de ciclos de propuestas.")
+    proposal_cycle.add_argument("--interval", type=int, default=60, help="Segundos entre ciclos.")
+    proposal_cycle.add_argument("--proposal-limit", type=int, default=3, help="Máximo de propuestas nuevas por ciclo.")
+    proposal_cycle.add_argument("--proposal-ttl-minutes", type=int, default=10, help="Minutos antes de expirar una propuesta.")
+    proposal_cycle.add_argument("--audit-on-empty", action="store_true", help="Muestra auditoría si no hay propuestas.")
+    proposal_cycle.set_defaults(func=run_proposal_cycle)
 
     return parser
 
