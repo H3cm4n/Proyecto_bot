@@ -803,6 +803,68 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Proposal cycle detenido por el usuario.[/yellow]")
 
+
+def run_watch_positions(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER POSITION WATCH")
+
+    if args.close_paper:
+        console.print("[red]Modo cierre PAPER activado:[/red] si una posición toca stop-loss o take-profit, se cerrará en PAPER.")
+    else:
+        console.print("[yellow]Modo vigilancia:[/yellow] no se cerrará ninguna posición. Solo se mostrarán señales.")
+
+    console.print("Presiona Ctrl+C para detener.\n")
+
+    try:
+        for cycle_number in range(1, args.cycles + 1):
+            console.print(f"\n[bold magenta]Watch cycle {cycle_number}/{args.cycles}[/bold magenta]")
+
+            if args.portfolio:
+                portfolio_rows = mark_open_trades_to_market()
+
+                if portfolio_rows:
+                    print_portfolio_table(portfolio_rows)
+                    save_portfolio_snapshot(portfolio_rows)
+                    console.print("[green]Snapshot de portfolio actualizado.[/green]")
+                else:
+                    console.print("[yellow]No hay posiciones abiertas para valorar.[/yellow]")
+
+            management_rows = evaluate_open_positions(
+                stop_loss_pct=args.stop_loss,
+                take_profit_pct=args.take_profit,
+                close_positions=args.close_paper,
+            )
+
+            if not management_rows:
+                console.print("[yellow]No hay posiciones abiertas para vigilar.[/yellow]")
+            else:
+                print_paper_management_table(management_rows)
+
+                actionable = [
+                    row for row in management_rows
+                    if str(row.get("decision", "")).upper() != "HOLD"
+                ]
+
+                if actionable and args.close_paper:
+                    console.print("[green]Se aplicaron cierres PAPER según las reglas configuradas.[/green]")
+                elif actionable:
+                    console.print("[cyan]Hay posiciones que cumplen regla de salida, pero no se cerraron porque --close-paper no está activo.[/cyan]")
+                else:
+                    console.print("[green]Todas las posiciones siguen en HOLD.[/green]")
+
+            if args.report:
+                report = build_performance_report()
+                print_performance_report(report)
+                save_performance_report(report)
+                console.print("[green]Reporte PAPER actualizado.[/green]")
+
+            if cycle_number < args.cycles:
+                console.print(f"[yellow]Esperando {args.interval} segundos...[/yellow]")
+                time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Vigilancia de posiciones detenida por el usuario.[/yellow]")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -894,6 +956,16 @@ def build_parser() -> argparse.ArgumentParser:
     proposal_cycle.add_argument("--proposal-ttl-minutes", type=int, default=10, help="Minutos antes de expirar una propuesta.")
     proposal_cycle.add_argument("--audit-on-empty", action="store_true", help="Muestra auditoría si no hay propuestas.")
     proposal_cycle.set_defaults(func=run_proposal_cycle)
+
+    watch_positions = subparsers.add_parser("watch-positions", help="Vigila posiciones PAPER abiertas de forma recurrente.")
+    watch_positions.add_argument("--cycles", type=int, default=10, help="Número de ciclos de vigilancia.")
+    watch_positions.add_argument("--interval", type=int, default=60, help="Segundos entre ciclos.")
+    watch_positions.add_argument("--stop-loss", type=float, default=-20.0, help="ROI porcentual para stop-loss PAPER.")
+    watch_positions.add_argument("--take-profit", type=float, default=25.0, help="ROI porcentual para take-profit PAPER.")
+    watch_positions.add_argument("--close-paper", action="store_true", help="Cierra posiciones PAPER si cumplen stop-loss/take-profit.")
+    watch_positions.add_argument("--portfolio", action="store_true", help="Muestra valuación mark-to-market antes de gestionar.")
+    watch_positions.add_argument("--report", action="store_true", help="Actualiza reporte de performance en cada ciclo.")
+    watch_positions.set_defaults(func=run_watch_positions)
 
     return parser
 
