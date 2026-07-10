@@ -13,6 +13,7 @@ from app.execution.paper_manager import evaluate_open_positions
 from app.brain.edge_model import attach_edge_scores
 from app.brain.decision_audit import audit_trade_rows
 from app.brain.trade_proposals import approve_trade_proposal, create_trade_proposals, list_trade_proposals, reject_trade_proposal
+from app.risk.paper_limits import load_paper_risk_state
 from app.execution.paper_report import build_performance_report, save_performance_report
 
 console = Console()
@@ -682,6 +683,44 @@ def run_reject(args: argparse.Namespace) -> None:
     else:
         console.print(f"[red]{result.get('message')}[/red]")
 
+
+def run_risk_status(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER RISK STATUS")
+
+    state = load_paper_risk_state()
+
+    max_open_positions = getattr(args, "max_open_positions", 3)
+    max_total_exposure_usdc = getattr(args, "max_total_exposure_usdc", 15.0)
+    default_trade_size = getattr(args, "paper_size", 5.0)
+
+    available_positions = max(0, max_open_positions - state.open_positions)
+    available_exposure = max(0.0, round(max_total_exposure_usdc - state.open_exposure_usdc, 4))
+
+    can_open_default_trade = (
+        available_positions > 0
+        and available_exposure >= default_trade_size
+    )
+
+    table = Table(title="Estado de riesgo PAPER")
+
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Posiciones abiertas", f"{state.open_positions} / {max_open_positions}")
+    table.add_row("Exposición abierta", f"${state.open_exposure_usdc} / ${max_total_exposure_usdc}")
+    table.add_row("Slots disponibles", str(available_positions))
+    table.add_row("Exposición disponible", f"${available_exposure}")
+    table.add_row("Tamaño default trade", f"${default_trade_size}")
+    table.add_row("Puede abrir trade default", "YES" if can_open_default_trade else "NO")
+
+    console.print(table)
+
+    if can_open_default_trade:
+        console.print("[green]Riesgo OK:[/green] el bot todavía puede abrir una posición PAPER con el tamaño default.")
+    else:
+        console.print("[yellow]Riesgo limitado:[/yellow] el bot no debería abrir nuevas posiciones PAPER con el tamaño default.")
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -758,6 +797,12 @@ def build_parser() -> argparse.ArgumentParser:
     reject.add_argument("proposal_id", help="ID de la propuesta a rechazar.")
     reject.add_argument("--reason", default="Rejected by human.", help="Razón del rechazo.")
     reject.set_defaults(func=run_reject)
+
+    risk_status = subparsers.add_parser("risk-status", help="Muestra exposición y límites PAPER actuales.")
+    risk_status.add_argument("--paper-size", type=float, default=5.0, help="Tamaño default de trade PAPER.")
+    risk_status.add_argument("--max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas PAPER.")
+    risk_status.add_argument("--max-total-exposure-usdc", type=float, default=15.0, help="Exposición máxima PAPER.")
+    risk_status.set_defaults(func=run_risk_status)
 
     return parser
 
