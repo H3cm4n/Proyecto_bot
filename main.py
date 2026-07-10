@@ -11,6 +11,7 @@ from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
 from app.execution.paper_manager import evaluate_open_positions
 from app.brain.edge_model import attach_edge_scores
+from app.brain.decision_audit import audit_trade_rows
 from app.execution.paper_report import build_performance_report, save_performance_report
 
 console = Console()
@@ -481,6 +482,74 @@ def run_cycle(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Ciclo detenido por el usuario.[/yellow]")
 
+
+def print_decision_audit_table(rows: list[dict]) -> None:
+    if not rows:
+        console.print("[yellow]No hay candidatos para auditar.[/yellow]")
+        return
+
+    table = Table(title="Auditor de decisiones PAPER")
+
+    table.add_column("#", justify="right")
+    table.add_column("Decision")
+    table.add_column("Score", justify="right")
+    table.add_column("Edge", justify="right")
+    table.add_column("ΔMid", justify="right")
+    table.add_column("Outcome")
+    table.add_column("Ask", justify="right")
+    table.add_column("RelSpread%", justify="right")
+    table.add_column("Razones", overflow="fold")
+    table.add_column("Pregunta", overflow="fold")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("decision", "")),
+            str(row.get("score", "")),
+            str(row.get("edge_score", "")),
+            str(row.get("edge_mid_delta", "")),
+            str(row.get("outcome", "")),
+            str(row.get("ask", "")),
+            str(row.get("relative_spread_pct", "")),
+            str(row.get("reasons", "")),
+            str(row.get("question", ""))[:80],
+        )
+
+    console.print(table)
+
+
+def run_audit(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PAPER DECISION AUDIT, sin wallet, sin compras")
+
+    rows = collect_orderbook_snapshot(
+        event_limit=args.event_limit,
+        market_limit=args.market_limit,
+        request_delay=args.request_delay,
+    )
+
+    if not rows:
+        console.print("[red]No se obtuvieron orderbooks.[/red]")
+        return
+
+    rows = attach_edge_scores(rows)
+
+    print_snapshot_table(
+        rows,
+        alerts_only=args.alerts,
+        min_score=args.min_score,
+    )
+
+    audited_rows = audit_trade_rows(
+        rows=rows,
+        usdc_amount=args.paper_size,
+        min_score=args.paper_min_score,
+        min_edge_score=getattr(args, "paper_min_edge", 0),
+        min_edge_mid_delta=getattr(args, "paper_min_edge_delta", 0.005),
+    )
+
+    print_decision_audit_table(audited_rows)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -533,6 +602,10 @@ def build_parser() -> argparse.ArgumentParser:
     cycle.add_argument("--take-profit", type=float, default=25.0)
     cycle.add_argument("--report", action="store_true", help="Genera reporte de performance PAPER.")
     cycle.set_defaults(func=run_cycle)
+
+    audit = subparsers.add_parser("audit", help="Explica por qué el bot aceptaría o rechazaría candidatos PAPER.")
+    add_common_args(audit)
+    audit.set_defaults(func=run_audit)
 
     return parser
 
