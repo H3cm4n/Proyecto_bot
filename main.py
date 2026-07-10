@@ -16,6 +16,7 @@ from app.brain.trade_proposals import approve_trade_proposal, create_trade_propo
 from app.risk.paper_limits import load_paper_risk_state
 from app.execution.paper_report import build_performance_report, save_performance_report
 from app.monitoring.supervisor_journal import load_supervisor_journal, save_supervisor_journal_entry
+from app.monitoring.health_check import run_health_check
 
 console = Console()
 DATA_DIR = Path("data")
@@ -1139,6 +1140,68 @@ def run_supervisor_journal(args: argparse.Namespace) -> None:
     rows = load_supervisor_journal(tail=args.tail)
     print_supervisor_journal(rows)
 
+
+def print_health_check(result: dict) -> None:
+    overall_status = result.get("overall_status", "UNKNOWN")
+
+    if overall_status == "OK":
+        console.print("[bold green]HEALTH CHECK: OK[/bold green]")
+    elif overall_status == "WARN":
+        console.print("[bold yellow]HEALTH CHECK: WARN[/bold yellow]")
+    else:
+        console.print("[bold red]HEALTH CHECK: FAIL[/bold red]")
+
+    table = Table(title="Bot Health Check")
+
+    table.add_column("#", justify="right")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Detail", overflow="fold")
+
+    for idx, check in enumerate(result.get("checks", []), start=1):
+        status = str(check.get("status", "UNKNOWN"))
+
+        if status == "OK":
+            status_text = "[green]OK[/green]"
+        elif status == "WARN":
+            status_text = "[yellow]WARN[/yellow]"
+        elif status == "FAIL":
+            status_text = "[red]FAIL[/red]"
+        else:
+            status_text = status
+
+        table.add_row(
+            str(idx),
+            str(check.get("name", "")),
+            status_text,
+            str(check.get("detail", "")),
+        )
+
+    console.print(table)
+
+
+def run_health_check_command(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] HEALTH CHECK")
+
+    result = run_health_check(
+        max_journal_age_minutes=args.max_journal_age_minutes,
+        min_orderbook_rows=args.min_orderbook_rows,
+        max_open_positions=args.max_open_positions,
+        max_total_exposure_usdc=args.max_total_exposure_usdc,
+        skip_api=args.skip_api,
+    )
+
+    print_health_check(result)
+
+    overall_status = result.get("overall_status", "UNKNOWN")
+
+    if overall_status == "FAIL":
+        raise SystemExit(1)
+
+    if overall_status == "WARN" and args.fail_on_warn:
+        raise SystemExit(1)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1260,6 +1323,15 @@ def build_parser() -> argparse.ArgumentParser:
     supervisor_journal = subparsers.add_parser("supervisor-journal", help="Muestra últimas entradas del supervisor journal.")
     supervisor_journal.add_argument("--tail", type=int, default=10, help="Número de entradas recientes a mostrar.")
     supervisor_journal.set_defaults(func=run_supervisor_journal)
+
+    health_check = subparsers.add_parser("health-check", help="Revisa salud general del bot PAPER.")
+    health_check.add_argument("--max-journal-age-minutes", type=float, default=30.0, help="Edad máxima permitida del último journal.")
+    health_check.add_argument("--min-orderbook-rows", type=int, default=1, help="Mínimo de filas de orderbook esperadas en el último ciclo.")
+    health_check.add_argument("--max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas PAPER.")
+    health_check.add_argument("--max-total-exposure-usdc", type=float, default=15.0, help="Máxima exposición PAPER permitida.")
+    health_check.add_argument("--skip-api", action="store_true", help="Omite chequeo de API externa.")
+    health_check.add_argument("--fail-on-warn", action="store_true", help="Devuelve error también si hay WARN.")
+    health_check.set_defaults(func=run_health_check_command)
 
     return parser
 
