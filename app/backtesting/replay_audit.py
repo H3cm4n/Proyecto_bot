@@ -211,6 +211,52 @@ def apply_cycle_selection(
     return final_rows
 
 
+
+def split_reasons(reasons: Any) -> list[str]:
+    raw = safe_str(reasons)
+
+    if not raw:
+        return []
+
+    return [reason.strip() for reason in raw.split(",") if reason.strip()]
+
+
+def rank_near_misses(
+    rows: list[dict[str, Any]],
+    max_reasons: int = 2,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+
+    for row in rows:
+        if row.get("decision") != "REJECT":
+            continue
+
+        reasons = split_reasons(row.get("reasons"))
+
+        if not reasons:
+            continue
+
+        if len(reasons) > max_reasons:
+            continue
+
+        enriched = dict(row)
+        enriched["reason_count"] = len(reasons)
+        candidates.append(enriched)
+
+    return sorted(
+        candidates,
+        key=lambda row: (
+            -safe_int(row.get("reason_count")),
+            safe_int(row.get("score")),
+            safe_int(row.get("edge_score")),
+            safe_float(row.get("edge_mid_delta")),
+            safe_float(row.get("top_liquidity")),
+            -safe_float(row.get("relative_spread_pct")),
+        ),
+        reverse=True,
+    )[:limit]
+
 def summarize_replay(rows: list[dict[str, Any]]) -> dict[str, Any]:
     reason_counter: Counter[str] = Counter()
 
@@ -238,6 +284,7 @@ def summarize_replay(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "rejected_count": len(rejected_rows),
         "reason_counts": dict(reason_counter.most_common()),
         "selected_rows": sort_replay_candidates(selected_rows),
+        "near_miss_rows": rank_near_misses(rows),
     }
 
 

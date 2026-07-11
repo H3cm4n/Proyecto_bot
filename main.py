@@ -1523,6 +1523,39 @@ def print_replay_summary(result: dict, limit: int = 10) -> None:
 
     console.print(selected_table)
 
+    near_miss_rows = summary.get("near_miss_rows", [])
+
+    near_miss_table = Table(title=f"Near Misses - Candidatos casi elegibles - Top {limit}")
+    near_miss_table.add_column("#", justify="right")
+    near_miss_table.add_column("Time")
+    near_miss_table.add_column("Score", justify="right")
+    near_miss_table.add_column("Edge", justify="right")
+    near_miss_table.add_column("ΔMid", justify="right")
+    near_miss_table.add_column("Outcome")
+    near_miss_table.add_column("Ask", justify="right")
+    near_miss_table.add_column("RelSpread%", justify="right")
+    near_miss_table.add_column("Razones", overflow="fold")
+    near_miss_table.add_column("Pregunta", overflow="fold")
+
+    if near_miss_rows:
+        for idx, row in enumerate(near_miss_rows[:limit], start=1):
+            near_miss_table.add_row(
+                str(idx),
+                str(row.get("observed_at", "")),
+                str(row.get("score", "")),
+                str(row.get("edge_score", "")),
+                str(row.get("edge_mid_delta", "")),
+                str(row.get("outcome", "")),
+                str(row.get("ask", "")),
+                str(row.get("relative_spread_pct", "")),
+                str(row.get("reasons", "")),
+                str(row.get("question", "")),
+            )
+    else:
+        near_miss_table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "Sin near misses.", "-")
+
+    console.print(near_miss_table)
+
 
 def run_replay_command(args: argparse.Namespace) -> None:
     applied_profile = apply_replay_profile(args)
