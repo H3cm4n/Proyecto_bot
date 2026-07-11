@@ -1857,6 +1857,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
     parser.add_argument("--request-delay", type=float, default=0.25)
+    parser.add_argument(
+        "--exclude-keyword",
+        action="append",
+        default=[],
+        help="Excluye mercados cuya pregunta contenga esta palabra/frase. Puede repetirse.",
+    )
     parser.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
     parser.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
     parser.add_argument("--paper", action="store_true", help="Activa compras simuladas.")

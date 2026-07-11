@@ -51,6 +51,7 @@ def collect_orderbook_snapshot(
     event_limit: int = 20,
     market_limit: int = 10,
     request_delay: float = 0.25,
+    exclude_keywords: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Lee mercados abiertos, consulta sus orderbooks y devuelve filas listas para CSV.
@@ -60,6 +61,7 @@ def collect_orderbook_snapshot(
 
     events = get_active_events(limit=event_limit)
     markets = extract_market_rows(events)
+    markets = filter_excluded_markets(markets, exclude_keywords)
 
     if markets:
         markets_df = pd.DataFrame(markets)
