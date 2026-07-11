@@ -20,6 +20,7 @@ from app.monitoring.supervisor_journal import load_supervisor_journal, save_supe
 from app.monitoring.health_check import run_health_check
 from app.backtesting.replay_audit import run_replay_audit
 from app.backtesting.paper_backtest import run_signal_backtest
+from app.backtesting.universe_report import calculate_universe_report
 
 console = Console()
 DATA_DIR = Path("data")
@@ -1739,6 +1740,116 @@ def run_backtest_command(args: argparse.Namespace) -> None:
 
     print_backtest_summary(result, limit=args.limit)
 
+
+def print_simple_count_table(title: str, rows: list[dict], name_label: str = "Nombre") -> None:
+    table = Table(title=title)
+    table.add_column(name_label, overflow="fold")
+    table.add_column("Cantidad", justify="right")
+
+    if rows:
+        for row in rows:
+            table.add_row(str(row.get("name", "")), str(row.get("count", "")))
+    else:
+        table.add_row("Sin datos", "0")
+
+    console.print(table)
+
+
+def print_question_metric_table(title: str, rows: list[dict], metric_label: str = "Metric") -> None:
+    table = Table(title=title)
+    table.add_column("#", justify="right")
+    table.add_column("Rows", justify="right")
+    table.add_column("AvgScore", justify="right")
+    table.add_column("MaxScore", justify="right")
+    table.add_column("AvgEdge", justify="right")
+    table.add_column("MaxEdge", justify="right")
+    table.add_column("AvgΔ", justify="right")
+    table.add_column("RelSpread%", justify="right")
+    table.add_column("TopLiq", justify="right")
+    table.add_column("Category")
+    table.add_column("Pregunta", overflow="fold")
+
+    if rows:
+        for idx, row in enumerate(rows, start=1):
+            table.add_row(
+                str(idx),
+                str(row.get("rows", "")),
+                f"{float(row.get('avg_score', 0)):.2f}",
+                f"{float(row.get('max_score', 0)):.0f}",
+                f"{float(row.get('avg_edge', 0)):.2f}",
+                f"{float(row.get('max_edge', 0)):.0f}",
+                f"{float(row.get('avg_delta', 0)):.4f}",
+                f"{float(row.get('avg_rel_spread', 0)):.2f}",
+                f"{float(row.get('avg_top_liq', 0)):.2f}",
+                str(row.get("category", "")),
+                str(row.get("question_clean", "")),
+            )
+    else:
+        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "Sin datos")
+
+    console.print(table)
+
+
+def print_universe_report(report: dict, limit: int = 15) -> None:
+    summary = report.get("summary", {})
+    tables = report.get("tables", {})
+
+    table = Table(title="Universe Report Summary")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Historial", str(report.get("history_path", "")))
+    table.add_row("Filas", str(summary.get("rows", 0)))
+    table.add_row("Ciclos", str(summary.get("cycles", 0)))
+    table.add_row("Preguntas únicas", str(summary.get("unique_questions", 0)))
+    table.add_row("Tokens únicos", str(summary.get("unique_tokens", 0)))
+    table.add_row("Rows score >= 80", str(summary.get("strong_score_rows", 0)))
+    table.add_row("Rows edge >= 65", str(summary.get("strong_edge_rows", 0)))
+    table.add_row("Rows ΔMid >= 0.005", str(summary.get("positive_delta_rows", 0)))
+    table.add_row("Rows tipo elegible", str(summary.get("eligible_like_rows", 0)))
+    table.add_row("Score promedio", str(summary.get("avg_score", 0)))
+    table.add_row("Edge promedio", str(summary.get("avg_edge", 0)))
+    table.add_row("RelSpread promedio", str(summary.get("avg_relative_spread_pct", 0)))
+
+    console.print(table)
+
+    print_simple_count_table("Categorías detectadas", tables.get("categories", []), "Categoría")
+    print_simple_count_table("Distribución de acciones", tables.get("actions", []), "Action")
+    print_simple_count_table("Distribución de edge_action", tables.get("edge_actions", []), "Edge Action")
+    print_simple_count_table("Buckets de edge", tables.get("edge_buckets", []), "Bucket")
+    print_simple_count_table("Buckets de score", tables.get("score_buckets", []), "Bucket")
+    print_simple_count_table("Buckets de precio ask", tables.get("price_buckets", []), "Bucket")
+
+    print_question_metric_table(
+        f"Mercados más repetidos - Top {limit}",
+        tables.get("most_repeated_questions", []),
+    )
+    print_question_metric_table(
+        f"Mercados por avg score - Top {limit}",
+        tables.get("top_avg_score_questions", []),
+    )
+    print_question_metric_table(
+        f"Mercados por max edge - Top {limit}",
+        tables.get("top_max_edge_questions", []),
+    )
+    print_question_metric_table(
+        f"Mercados por liquidez promedio - Top {limit}",
+        tables.get("top_avg_liquidity_questions", []),
+    )
+
+
+def run_universe_report_command(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] UNIVERSE REPORT")
+    console.print("[cyan]Analiza el historial local para entender qué mercados está viendo el bot.[/cyan]\n")
+
+    report = calculate_universe_report(
+        history_path=Path(args.history_path),
+        limit=args.limit,
+    )
+
+    print_universe_report(report, limit=args.limit)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1930,6 +2041,11 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--min-top-liquidity", type=float, default=10.0)
     backtest.add_argument("--max-relative-spread-pct", type=float, default=10.0)
     backtest.set_defaults(func=run_backtest_command)
+
+    universe_report = subparsers.add_parser("universe-report", help="Diagnostica el universo de mercados visto por el bot.")
+    universe_report.add_argument("--history-path", default="data/orderbook_history.csv")
+    universe_report.add_argument("--limit", type=int, default=15)
+    universe_report.set_defaults(func=run_universe_report_command)
 
     return parser
 
