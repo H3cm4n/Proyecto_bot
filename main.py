@@ -219,6 +219,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
         event_limit=args.event_limit,
         market_limit=args.market_limit,
         request_delay=args.request_delay,
+        exclude_keywords=getattr(args, "exclude_keyword", []),
     )
     rows = attach_edge_scores(rows)
 
@@ -565,6 +566,7 @@ def run_audit(args: argparse.Namespace) -> None:
         event_limit=args.event_limit,
         market_limit=args.market_limit,
         request_delay=args.request_delay,
+        exclude_keywords=getattr(args, "exclude_keyword", []),
     )
 
     if not rows:
@@ -633,6 +635,7 @@ def run_propose(args: argparse.Namespace) -> None:
         event_limit=args.event_limit,
         market_limit=args.market_limit,
         request_delay=args.request_delay,
+        exclude_keywords=getattr(args, "exclude_keyword", []),
     )
 
     if not rows:
