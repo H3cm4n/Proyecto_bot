@@ -829,6 +829,29 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
             console.print("[green]Historial actualizado:[/green] data/orderbook_history.csv")
             console.print(f"Filas agregadas: {len(rows)}")
 
+            if args.health_check_every > 0 and cycle_number % args.health_check_every == 0:
+                console.print("\n[bold blue]Ejecutando health-check del supervisor...[/bold blue]")
+
+                health_result = run_health_check(
+                    max_journal_age_minutes=args.health_max_journal_age_minutes,
+                    min_orderbook_rows=args.health_min_orderbook_rows,
+                    max_open_positions=args.health_max_open_positions,
+                    max_total_exposure_usdc=args.health_max_total_exposure_usdc,
+                    skip_api=args.health_skip_api,
+                )
+
+                print_health_check(health_result)
+
+                health_status = str(health_result.get("overall_status", "UNKNOWN")).upper()
+
+                if health_status == "FAIL" and args.health_stop_on_fail:
+                    console.print("[red]Supervisor detenido porque health-check terminó en FAIL.[/red]")
+                    raise SystemExit(1)
+
+                if health_status == "WARN" and args.health_stop_on_warn:
+                    console.print("[yellow]Supervisor detenido porque health-check terminó en WARN.[/yellow]")
+                    raise SystemExit(1)
+
             if cycle_number < args.cycles:
                 console.print(f"[yellow]Esperando {args.interval} segundos...[/yellow]")
                 time.sleep(args.interval)
@@ -1318,6 +1341,14 @@ def build_parser() -> argparse.ArgumentParser:
     paper_supervisor.add_argument("--no-portfolio", action="store_true", help="No muestra portfolio mark-to-market.")
     paper_supervisor.add_argument("--no-report", action="store_true", help="No actualiza reporte PAPER.")
     paper_supervisor.add_argument("--no-journal", action="store_true", help="No guarda data/supervisor_journal.csv.")
+    paper_supervisor.add_argument("--health-check-every", type=int, default=1, help="Corre health-check cada N ciclos. Usa 0 para desactivar.")
+    paper_supervisor.add_argument("--health-max-journal-age-minutes", type=float, default=30.0, help="Edad máxima permitida del último journal para health-check.")
+    paper_supervisor.add_argument("--health-min-orderbook-rows", type=int, default=1, help="Mínimo de filas de orderbook esperadas por health-check.")
+    paper_supervisor.add_argument("--health-max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas para health-check.")
+    paper_supervisor.add_argument("--health-max-total-exposure-usdc", type=float, default=15.0, help="Máxima exposición PAPER para health-check.")
+    paper_supervisor.add_argument("--health-skip-api", action="store_true", help="Omite chequeo de API externa dentro del supervisor.")
+    paper_supervisor.add_argument("--health-stop-on-fail", action="store_true", help="Detiene supervisor si health-check termina en FAIL.")
+    paper_supervisor.add_argument("--health-stop-on-warn", action="store_true", help="Detiene supervisor si health-check termina en WARN.")
     paper_supervisor.set_defaults(func=run_paper_supervisor)
 
     supervisor_journal = subparsers.add_parser("supervisor-journal", help="Muestra últimas entradas del supervisor journal.")
