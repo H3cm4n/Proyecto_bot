@@ -19,6 +19,7 @@ from app.execution.paper_report import build_performance_report, save_performanc
 from app.monitoring.supervisor_journal import load_supervisor_journal, save_supervisor_journal_entry
 from app.monitoring.health_check import run_health_check
 from app.backtesting.replay_audit import run_replay_audit
+from app.backtesting.paper_backtest import run_signal_backtest
 
 console = Console()
 DATA_DIR = Path("data")
@@ -1582,6 +1583,162 @@ def run_replay_command(args: argparse.Namespace) -> None:
 
     print_replay_summary(result, limit=args.limit)
 
+
+BACKTEST_PROFILE_KEYS = [
+    "min_score",
+    "paper_min_score",
+    "paper_min_edge",
+    "paper_min_edge_delta",
+    "proposal_limit",
+    "stop_loss",
+    "take_profit",
+]
+
+
+def apply_backtest_profile(args: argparse.Namespace) -> dict:
+    profile = getattr(args, "profile", "normal")
+
+    if profile == "custom":
+        return {}
+
+    if profile not in SUPERVISOR_PROFILES:
+        raise ValueError(f"Perfil desconocido: {profile}")
+
+    applied = {}
+
+    for attr in BACKTEST_PROFILE_KEYS:
+        value = SUPERVISOR_PROFILES[profile].get(attr)
+        flag = PROFILE_FLAG_MAP.get(attr)
+
+        if value is None:
+            continue
+
+        if flag and cli_arg_was_provided(flag):
+            continue
+
+        setattr(args, attr, value)
+        applied[attr] = value
+
+    return applied
+
+
+def print_backtest_profile(profile: str, applied: dict) -> None:
+    console.print(f"[cyan]Backtest profile:[/cyan] {profile}")
+
+    if not applied:
+        console.print("[yellow]Usando valores custom/manuales.[/yellow]")
+        return
+
+    table = Table(title=f"Backtest Profile: {profile}")
+    table.add_column("Parámetro")
+    table.add_column("Valor", justify="right")
+
+    for key, value in applied.items():
+        table.add_row(str(key), str(value))
+
+    console.print(table)
+
+
+def print_backtest_summary(result: dict, limit: int = 10) -> None:
+    summary = result.get("summary", {})
+
+    table = Table(title="Signal Backtest Summary")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Historial", str(result.get("history_path", "")))
+    table.add_row("Output", str(result.get("output_path", "")))
+    table.add_row("Señales seleccionadas", str(summary.get("selected_signals", 0)))
+    table.add_row("Duplicados omitidos", str(summary.get("skipped_duplicate_questions", 0)))
+    table.add_row("Trades simulados", str(summary.get("total_trades", 0)))
+    table.add_row("Capital simulado", f"${summary.get('invested_usdc', 0)}")
+    table.add_row("Valor final", f"${summary.get('exit_value_usdc', 0)}")
+    table.add_row("PnL", f"${summary.get('pnl_usdc', 0)}")
+    table.add_row("ROI", f"{summary.get('roi_pct', 0)}%")
+    table.add_row("Wins", str(summary.get("wins", 0)))
+    table.add_row("Losses", str(summary.get("losses", 0)))
+    table.add_row("Breakeven", str(summary.get("breakeven", 0)))
+    table.add_row("Winrate", f"{summary.get('winrate_pct', 0)}%")
+
+    console.print(table)
+
+    exit_reasons = summary.get("exit_reason_counts", {})
+
+    reason_table = Table(title="Motivos de salida BACKTEST")
+    reason_table.add_column("Motivo")
+    reason_table.add_column("Cantidad", justify="right")
+
+    if exit_reasons:
+        for reason, count in exit_reasons.items():
+            reason_table.add_row(str(reason), str(count))
+    else:
+        reason_table.add_row("Sin trades", "0")
+
+    console.print(reason_table)
+
+    trades = result.get("trades", [])
+
+    trades_table = Table(title=f"Trades simulados - Top {limit}")
+    trades_table.add_column("#", justify="right")
+    trades_table.add_column("Entry")
+    trades_table.add_column("Exit")
+    trades_table.add_column("Reason")
+    trades_table.add_column("Outcome")
+    trades_table.add_column("EntryPx", justify="right")
+    trades_table.add_column("ExitPx", justify="right")
+    trades_table.add_column("PnL", justify="right")
+    trades_table.add_column("ROI%", justify="right")
+    trades_table.add_column("Pregunta", overflow="fold")
+
+    if trades:
+        for idx, trade in enumerate(trades[:limit], start=1):
+            trades_table.add_row(
+                str(idx),
+                str(trade.get("entry_time", "")),
+                str(trade.get("exit_time", "")),
+                str(trade.get("exit_reason", "")),
+                str(trade.get("outcome", "")),
+                str(trade.get("entry_price", "")),
+                str(trade.get("exit_price", "")),
+                str(trade.get("pnl_usdc", "")),
+                str(trade.get("roi_pct", "")),
+                str(trade.get("question", "")),
+            )
+    else:
+        trades_table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "No hubo trades simulados.")
+
+    console.print(trades_table)
+
+
+def run_backtest_command(args: argparse.Namespace) -> None:
+    applied_profile = apply_backtest_profile(args)
+
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] SIGNAL BACKTEST")
+    console.print("[cyan]Lee historial local. No toca API. No abre trades. No modifica posiciones.[/cyan]\n")
+
+    print_backtest_profile(args.profile, applied_profile)
+
+    result = run_signal_backtest(
+        history_path=Path(args.history_path),
+        output_path=Path(args.output_path),
+        usdc_amount=args.paper_size,
+        min_score=args.paper_min_score,
+        min_edge_score=args.paper_min_edge,
+        min_edge_mid_delta=args.paper_min_edge_delta,
+        proposal_limit=args.proposal_limit,
+        stop_loss_pct=args.stop_loss,
+        take_profit_pct=args.take_profit,
+        min_entry_price=args.min_entry_price,
+        max_entry_price=args.max_entry_price,
+        min_top_liquidity=args.min_top_liquidity,
+        max_relative_spread_pct=args.max_relative_spread_pct,
+        avoid_duplicate_questions=not args.allow_duplicate_questions,
+        save_output=not args.no_save,
+    )
+
+    print_backtest_summary(result, limit=args.limit)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1752,6 +1909,27 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--min-top-liquidity", type=float, default=10.0)
     replay.add_argument("--max-relative-spread-pct", type=float, default=10.0)
     replay.set_defaults(func=run_replay_command)
+
+    backtest = subparsers.add_parser("backtest", help="Simula trades desde señales seleccionadas por replay.")
+    backtest.add_argument("--profile", choices=["custom", "conservative", "normal", "aggressive"], default="normal")
+    backtest.add_argument("--history-path", default="data/orderbook_history.csv")
+    backtest.add_argument("--output-path", default="data/backtest_trades.csv")
+    backtest.add_argument("--limit", type=int, default=10, help="Número de trades simulados a mostrar.")
+    backtest.add_argument("--no-save", action="store_true", help="No guarda CSV de trades simulados.")
+    backtest.add_argument("--allow-duplicate-questions", action="store_true", help="Permite múltiples entradas en la misma pregunta.")
+    backtest.add_argument("--paper-size", type=float, default=5.0, help="USDC simulado por trade.")
+    backtest.add_argument("--min-score", type=int, default=50)
+    backtest.add_argument("--paper-min-score", type=int, default=80)
+    backtest.add_argument("--paper-min-edge", type=int, default=65)
+    backtest.add_argument("--paper-min-edge-delta", type=float, default=0.005)
+    backtest.add_argument("--proposal-limit", type=int, default=3)
+    backtest.add_argument("--stop-loss", type=float, default=-20.0)
+    backtest.add_argument("--take-profit", type=float, default=25.0)
+    backtest.add_argument("--min-entry-price", type=float, default=0.05)
+    backtest.add_argument("--max-entry-price", type=float, default=0.90)
+    backtest.add_argument("--min-top-liquidity", type=float, default=10.0)
+    backtest.add_argument("--max-relative-spread-pct", type=float, default=10.0)
+    backtest.set_defaults(func=run_backtest_command)
 
     return parser
 
