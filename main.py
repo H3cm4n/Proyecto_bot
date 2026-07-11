@@ -1350,6 +1350,63 @@ def run_health_check_command(args: argparse.Namespace) -> None:
     if overall_status == "WARN" and args.fail_on_warn:
         raise SystemExit(1)
 
+
+def print_bot_status_risk() -> None:
+    state = load_paper_risk_state()
+
+    table = Table(title="Risk Status PAPER")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Posiciones abiertas", f"{state.open_positions}/3")
+    table.add_row("Exposición abierta", f"${state.open_exposure_usdc}/$15.0")
+    table.add_row("Slots disponibles", str(max(0, 3 - state.open_positions)))
+    table.add_row("Exposición disponible", f"${max(0.0, 15.0 - state.open_exposure_usdc)}")
+
+    console.print(table)
+
+
+def run_bot_status(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] BOT STATUS")
+    console.print("[cyan]Resumen general del bot PAPER.[/cyan]\n")
+
+    health_result = run_health_check(
+        max_journal_age_minutes=args.max_journal_age_minutes,
+        min_orderbook_rows=args.min_orderbook_rows,
+        max_open_positions=args.max_open_positions,
+        max_total_exposure_usdc=args.max_total_exposure_usdc,
+        skip_api=args.skip_api,
+    )
+
+    print_health_check(health_result)
+
+    console.print()
+    print_bot_status_risk()
+
+    console.print()
+    portfolio_rows = mark_open_trades_to_market()
+
+    if portfolio_rows:
+        print_portfolio_table(portfolio_rows)
+    else:
+        console.print("[yellow]No hay posiciones abiertas PAPER.[/yellow]")
+
+    console.print()
+    report = build_performance_report()
+    print_performance_report(report)
+
+    console.print()
+    pending_proposals = list_trade_proposals(status="PENDING_APPROVAL")
+    print_trade_proposals_table(
+        pending_proposals,
+        title="Propuestas pendientes PENDING_APPROVAL",
+    )
+
+    console.print()
+    journal_rows = load_supervisor_journal(tail=args.tail)
+    print_supervisor_journal(journal_rows)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1494,6 +1551,15 @@ def build_parser() -> argparse.ArgumentParser:
     health_check.add_argument("--skip-api", action="store_true", help="Omite chequeo de API externa.")
     health_check.add_argument("--fail-on-warn", action="store_true", help="Devuelve error también si hay WARN.")
     health_check.set_defaults(func=run_health_check_command)
+
+    bot_status = subparsers.add_parser("bot-status", help="Muestra salud, riesgo, portfolio, reporte, propuestas y journal.")
+    bot_status.add_argument("--tail", type=int, default=5, help="Número de entradas recientes del journal.")
+    bot_status.add_argument("--skip-api", action="store_true", help="Omite chequeo de API externa.")
+    bot_status.add_argument("--max-journal-age-minutes", type=float, default=30.0, help="Edad máxima permitida del último journal.")
+    bot_status.add_argument("--min-orderbook-rows", type=int, default=1, help="Mínimo de filas de orderbook esperadas en el último ciclo.")
+    bot_status.add_argument("--max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas PAPER.")
+    bot_status.add_argument("--max-total-exposure-usdc", type=float, default=15.0, help="Máxima exposición PAPER permitida.")
+    bot_status.set_defaults(func=run_bot_status)
 
     return parser
 
