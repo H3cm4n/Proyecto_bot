@@ -18,6 +18,35 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+
+def normalize_keyword(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def market_matches_excluded_keyword(market: dict, exclude_keywords: list[str] | None = None) -> bool:
+    if not exclude_keywords:
+        return False
+
+    question = str(market.get("question") or market.get("title") or "").lower()
+
+    for keyword in exclude_keywords:
+        keyword = normalize_keyword(keyword)
+
+        if keyword and keyword in question:
+            return True
+
+    return False
+
+
+def filter_excluded_markets(markets: list[dict], exclude_keywords: list[str] | None = None) -> list[dict]:
+    if not exclude_keywords:
+        return markets
+
+    return [
+        market for market in markets
+        if not market_matches_excluded_keyword(market, exclude_keywords)
+    ]
+
 def collect_orderbook_snapshot(
     event_limit: int = 20,
     market_limit: int = 10,
