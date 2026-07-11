@@ -1,5 +1,6 @@
 import argparse
 import time
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -909,9 +910,124 @@ def run_watch_positions(args: argparse.Namespace) -> None:
         console.print("\n[yellow]Vigilancia de posiciones detenida por el usuario.[/yellow]")
 
 
+
+SUPERVISOR_PROFILES = {
+    "conservative": {
+        "min_score": 50,
+        "paper_min_score": 85,
+        "paper_min_edge": 75,
+        "paper_min_edge_delta": 0.0075,
+        "proposal_limit": 1,
+        "proposal_ttl_minutes": 5,
+        "stop_loss": -15.0,
+        "take_profit": 20.0,
+        "health_check_every": 1,
+        "health_min_orderbook_rows": 20,
+        "health_stop_on_fail": True,
+    },
+    "normal": {
+        "min_score": 50,
+        "paper_min_score": 80,
+        "paper_min_edge": 65,
+        "paper_min_edge_delta": 0.005,
+        "proposal_limit": 3,
+        "proposal_ttl_minutes": 10,
+        "stop_loss": -20.0,
+        "take_profit": 25.0,
+        "health_check_every": 1,
+        "health_min_orderbook_rows": 20,
+        "health_stop_on_fail": True,
+    },
+    "aggressive": {
+        "min_score": 45,
+        "paper_min_score": 70,
+        "paper_min_edge": 50,
+        "paper_min_edge_delta": 0.0,
+        "proposal_limit": 5,
+        "proposal_ttl_minutes": 15,
+        "stop_loss": -25.0,
+        "take_profit": 35.0,
+        "health_check_every": 1,
+        "health_min_orderbook_rows": 20,
+        "health_stop_on_fail": True,
+    },
+}
+
+
+PROFILE_FLAG_MAP = {
+    "min_score": "--min-score",
+    "paper_min_score": "--paper-min-score",
+    "paper_min_edge": "--paper-min-edge",
+    "paper_min_edge_delta": "--paper-min-edge-delta",
+    "proposal_limit": "--proposal-limit",
+    "proposal_ttl_minutes": "--proposal-ttl-minutes",
+    "stop_loss": "--stop-loss",
+    "take_profit": "--take-profit",
+    "health_check_every": "--health-check-every",
+    "health_min_orderbook_rows": "--health-min-orderbook-rows",
+    "health_stop_on_fail": "--health-stop-on-fail",
+}
+
+
+def cli_arg_was_provided(flag: str) -> bool:
+    args = sys.argv[1:]
+
+    for item in args:
+        if item == flag or item.startswith(flag + "="):
+            return True
+
+    return False
+
+
+def apply_supervisor_profile(args: argparse.Namespace) -> dict:
+    profile = getattr(args, "profile", "custom")
+
+    if profile == "custom":
+        return {}
+
+    if profile not in SUPERVISOR_PROFILES:
+        raise ValueError(f"Perfil desconocido: {profile}")
+
+    applied = {}
+
+    for attr, value in SUPERVISOR_PROFILES[profile].items():
+        flag = PROFILE_FLAG_MAP.get(attr)
+
+        if flag and cli_arg_was_provided(flag):
+            continue
+
+        setattr(args, attr, value)
+        applied[attr] = value
+
+    return applied
+
+
+def print_supervisor_profile(profile: str, applied: dict) -> None:
+    if profile == "custom":
+        console.print("[cyan]Perfil supervisor:[/cyan] custom")
+        return
+
+    console.print(f"[cyan]Perfil supervisor:[/cyan] {profile}")
+
+    if not applied:
+        console.print("[yellow]Perfil seleccionado, pero todos sus valores fueron sobrescritos por flags manuales.[/yellow]")
+        return
+
+    table = Table(title=f"Supervisor Profile: {profile}")
+    table.add_column("Parámetro")
+    table.add_column("Valor", justify="right")
+
+    for key, value in applied.items():
+        table.add_row(str(key), str(value))
+
+    console.print(table)
+
 def run_paper_supervisor(args: argparse.Namespace) -> None:
+    applied_profile = apply_supervisor_profile(args)
+
     console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
     console.print("[bold green]Modo actual:[/bold green] PAPER SUPERVISOR")
+    print_supervisor_profile(getattr(args, "profile", "custom"), applied_profile)
     console.print("[yellow]Autopilot PAPER: vigila posiciones, actualiza reportes y genera propuestas.[/yellow]")
     console.print("[yellow]No usa wallet. No ejecuta compras reales. No aprueba nuevas entradas sin humano.[/yellow]")
 
@@ -1338,6 +1454,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     paper_supervisor = subparsers.add_parser("paper-supervisor", help="Autopilot PAPER: vigila posiciones, reporta y genera propuestas.")
     add_common_args(paper_supervisor)
+    paper_supervisor.add_argument(
+        "--profile",
+        choices=["custom", "conservative", "normal", "aggressive"],
+        default="custom",
+        help="Perfil preconfigurado del supervisor PAPER.",
+    )
     paper_supervisor.add_argument("--cycles", type=int, default=5, help="Número de ciclos del supervisor.")
     paper_supervisor.add_argument("--interval", type=int, default=60, help="Segundos entre ciclos.")
     paper_supervisor.add_argument("--stop-loss", type=float, default=-20.0, help="ROI porcentual para stop-loss PAPER.")
