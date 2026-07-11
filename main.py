@@ -18,6 +18,7 @@ from app.risk.paper_limits import load_paper_risk_state
 from app.execution.paper_report import build_performance_report, save_performance_report
 from app.monitoring.supervisor_journal import load_supervisor_journal, save_supervisor_journal_entry
 from app.monitoring.health_check import run_health_check
+from app.backtesting.replay_audit import run_replay_audit
 
 console = Console()
 DATA_DIR = Path("data")
@@ -1407,6 +1408,147 @@ def run_bot_status(args: argparse.Namespace) -> None:
     journal_rows = load_supervisor_journal(tail=args.tail)
     print_supervisor_journal(journal_rows)
 
+
+REPLAY_PROFILE_KEYS = [
+    "min_score",
+    "paper_min_score",
+    "paper_min_edge",
+    "paper_min_edge_delta",
+    "proposal_limit",
+]
+
+
+def apply_replay_profile(args: argparse.Namespace) -> dict:
+    profile = getattr(args, "profile", "normal")
+
+    if profile == "custom":
+        return {}
+
+    if profile not in SUPERVISOR_PROFILES:
+        raise ValueError(f"Perfil desconocido: {profile}")
+
+    applied = {}
+
+    for attr in REPLAY_PROFILE_KEYS:
+        value = SUPERVISOR_PROFILES[profile].get(attr)
+        flag = PROFILE_FLAG_MAP.get(attr)
+
+        if value is None:
+            continue
+
+        if flag and cli_arg_was_provided(flag):
+            continue
+
+        setattr(args, attr, value)
+        applied[attr] = value
+
+    return applied
+
+
+def print_replay_profile(profile: str, applied: dict) -> None:
+    console.print(f"[cyan]Replay profile:[/cyan] {profile}")
+
+    if not applied:
+        console.print("[yellow]Usando valores custom/manuales.[/yellow]")
+        return
+
+    table = Table(title=f"Replay Profile: {profile}")
+    table.add_column("Parámetro")
+    table.add_column("Valor", justify="right")
+
+    for key, value in applied.items():
+        table.add_row(str(key), str(value))
+
+    console.print(table)
+
+
+def print_replay_summary(result: dict, limit: int = 10) -> None:
+    summary = result.get("summary", {})
+
+    table = Table(title="Replay/Audit Summary")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Historial", str(result.get("history_path", "")))
+    table.add_row("Output", str(result.get("output_path", "")))
+    table.add_row("Filas analizadas", str(summary.get("rows_analyzed", 0)))
+    table.add_row("Ciclos analizados", str(summary.get("cycles_analyzed", 0)))
+    table.add_row("Candidatos seleccionados", str(summary.get("selected_count", 0)))
+    table.add_row("Filas rechazadas", str(summary.get("rejected_count", 0)))
+
+    console.print(table)
+
+    reason_counts = summary.get("reason_counts", {})
+
+    reason_table = Table(title="Principales razones de rechazo")
+    reason_table.add_column("Razón")
+    reason_table.add_column("Cantidad", justify="right")
+
+    if reason_counts:
+        for reason, count in list(reason_counts.items())[:15]:
+            reason_table.add_row(str(reason), str(count))
+    else:
+        reason_table.add_row("Sin rechazos", "0")
+
+    console.print(reason_table)
+
+    selected_rows = summary.get("selected_rows", [])
+
+    selected_table = Table(title=f"Candidatos seleccionados por replay - Top {limit}")
+    selected_table.add_column("#", justify="right")
+    selected_table.add_column("Time")
+    selected_table.add_column("Score", justify="right")
+    selected_table.add_column("Edge", justify="right")
+    selected_table.add_column("ΔMid", justify="right")
+    selected_table.add_column("Outcome")
+    selected_table.add_column("Ask", justify="right")
+    selected_table.add_column("RelSpread%", justify="right")
+    selected_table.add_column("Pregunta", overflow="fold")
+
+    if selected_rows:
+        for idx, row in enumerate(selected_rows[:limit], start=1):
+            selected_table.add_row(
+                str(idx),
+                str(row.get("observed_at", "")),
+                str(row.get("score", "")),
+                str(row.get("edge_score", "")),
+                str(row.get("edge_mid_delta", "")),
+                str(row.get("outcome", "")),
+                str(row.get("ask", "")),
+                str(row.get("relative_spread_pct", "")),
+                str(row.get("question", "")),
+            )
+    else:
+        selected_table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "No hubo candidatos seleccionados.")
+
+    console.print(selected_table)
+
+
+def run_replay_command(args: argparse.Namespace) -> None:
+    applied_profile = apply_replay_profile(args)
+
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] REPLAY/AUDIT")
+    console.print("[cyan]Lee data/orderbook_history.csv. No toca API. No abre trades. No modifica posiciones.[/cyan]\n")
+
+    print_replay_profile(args.profile, applied_profile)
+
+    result = run_replay_audit(
+        history_path=Path(args.history_path),
+        output_path=Path(args.output_path),
+        min_score=args.paper_min_score,
+        min_edge_score=args.paper_min_edge,
+        min_edge_mid_delta=args.paper_min_edge_delta,
+        proposal_limit=args.proposal_limit,
+        min_entry_price=args.min_entry_price,
+        max_entry_price=args.max_entry_price,
+        min_top_liquidity=args.min_top_liquidity,
+        max_relative_spread_pct=args.max_relative_spread_pct,
+        save_output=not args.no_save,
+    )
+
+    print_replay_summary(result, limit=args.limit)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -1560,6 +1702,23 @@ def build_parser() -> argparse.ArgumentParser:
     bot_status.add_argument("--max-open-positions", type=int, default=3, help="Máximo de posiciones abiertas PAPER.")
     bot_status.add_argument("--max-total-exposure-usdc", type=float, default=15.0, help="Máxima exposición PAPER permitida.")
     bot_status.set_defaults(func=run_bot_status)
+
+    replay = subparsers.add_parser("replay", help="Audita el historial de orderbooks con los filtros del bot.")
+    replay.add_argument("--profile", choices=["custom", "conservative", "normal", "aggressive"], default="normal")
+    replay.add_argument("--history-path", default="data/orderbook_history.csv")
+    replay.add_argument("--output-path", default="data/replay_audit.csv")
+    replay.add_argument("--limit", type=int, default=10, help="Número de candidatos seleccionados a mostrar.")
+    replay.add_argument("--no-save", action="store_true", help="No guarda CSV de auditoría.")
+    replay.add_argument("--min-score", type=int, default=50, help="Score mínimo visual/reference.")
+    replay.add_argument("--paper-min-score", type=int, default=80, help="Score mínimo para que replay seleccione candidato.")
+    replay.add_argument("--paper-min-edge", type=int, default=65, help="Edge mínimo para que replay seleccione candidato.")
+    replay.add_argument("--paper-min-edge-delta", type=float, default=0.005, help="Delta mínimo de mid price.")
+    replay.add_argument("--proposal-limit", type=int, default=3, help="Máximo de candidatos seleccionados por ciclo.")
+    replay.add_argument("--min-entry-price", type=float, default=0.05)
+    replay.add_argument("--max-entry-price", type=float, default=0.90)
+    replay.add_argument("--min-top-liquidity", type=float, default=10.0)
+    replay.add_argument("--max-relative-spread-pct", type=float, default=10.0)
+    replay.set_defaults(func=run_replay_command)
 
     return parser
 
