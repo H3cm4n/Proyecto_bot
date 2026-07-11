@@ -1089,9 +1089,18 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
             if args.health_check_every > 0 and cycle_number % args.health_check_every == 0:
                 console.print("\n[bold blue]Ejecutando health-check del supervisor...[/bold blue]")
 
+                health_min_orderbook_rows = args.health_min_orderbook_rows
+
+                if args.no_proposals and health_min_orderbook_rows > 0:
+                    health_min_orderbook_rows = 0
+                    console.print(
+                        "[cyan]Health-check: --no-proposals activo; "
+                        "mínimo de orderbooks ajustado a 0.[/cyan]"
+                    )
+
                 health_result = run_health_check(
                     max_journal_age_minutes=args.health_max_journal_age_minutes,
-                    min_orderbook_rows=args.health_min_orderbook_rows,
+                    min_orderbook_rows=health_min_orderbook_rows,
                     max_open_positions=args.health_max_open_positions,
                     max_total_exposure_usdc=args.health_max_total_exposure_usdc,
                     skip_api=args.health_skip_api,
