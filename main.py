@@ -1947,6 +1947,10 @@ def print_portfolio_backtest_summary(result: dict) -> None:
     table.add_row("Max drawdown", f"{summary.get('max_drawdown', 0)}%")
     table.add_row("Exposición máxima usada", f"${summary.get('max_exposure_used', 0)}")
     table.add_row("Número máximo de posiciones abiertas", str(summary.get("max_positions_open", 0)))
+    table.add_row("Máx. posiciones por event-group", str(summary.get("max_event_group_positions", 0)))
+    table.add_row("Cooldown por tema/ciclos", str(summary.get("event_cooldown_cycles", 0)))
+    table.add_row("Bloqueos por event-group", str(summary.get("event_group_rejects", 0)))
+    table.add_row("Bloqueos por cooldown", str(summary.get("cooldown_rejects", 0)))
 
     console.print(table)
 
@@ -2027,6 +2031,8 @@ def run_portfolio_backtest_command(args: argparse.Namespace) -> None:
         min_top_liquidity=args.min_top_liquidity,
         max_relative_spread_pct=args.max_relative_spread_pct,
         max_new_trades_per_cycle=args.max_new_trades_per_cycle,
+        max_event_group_positions=args.max_event_group_positions,
+        event_cooldown_cycles=args.event_cooldown_cycles,
         save_output=not args.no_save,
     )
 
@@ -2254,6 +2260,8 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio_backtest.add_argument("--min-top-liquidity", type=float, default=10.0)
     portfolio_backtest.add_argument("--max-relative-spread-pct", type=float, default=10.0)
     portfolio_backtest.add_argument("--max-new-trades-per-cycle", type=int, default=1, help="Máximo número de nuevas posiciones por ciclo.")
+    portfolio_backtest.add_argument("--max-event-group-positions", type=int, default=1, help="Máximo número de posiciones abiertas por tema/event-group.")
+    portfolio_backtest.add_argument("--event-cooldown-cycles", type=int, default=0, help="Ciclos de espera antes de volver a abrir el mismo tema/event-group.")
     portfolio_backtest.set_defaults(func=run_portfolio_backtest_command)
 
     return parser

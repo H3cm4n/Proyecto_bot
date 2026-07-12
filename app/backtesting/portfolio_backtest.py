@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import pandas as pd
@@ -85,6 +86,45 @@ def check_exit_conditions(
     return False, ""
 
 
+
+def normalize_event_key(question: str) -> str:
+    """
+    Build a rough event/topic key from a market question.
+
+    Examples:
+    - "Will Russia capture Kostyantynivka by July 31?"
+    - "Will Russia capture Kostyantynivka by August 31?"
+    both become:
+    - "will russia capture kostyantynivka"
+    """
+    text = safe_str(question).lower().strip()
+
+    # Remove common date endings after "by", "before", "after", "on".
+    months = (
+        "january|february|march|april|may|june|july|august|september|"
+        "october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|"
+        "oct|nov|dec"
+    )
+
+    patterns = [
+        rf"\bby\s+({months})\s+\d{{1,2}}(?:,\s*\d{{4}})?\??$",
+        rf"\bbefore\s+({months})\s+\d{{1,2}}(?:,\s*\d{{4}})?\??$",
+        rf"\bafter\s+({months})\s+\d{{1,2}}(?:,\s*\d{{4}})?\??$",
+        rf"\bon\s+({months})\s+\d{{1,2}}(?:,\s*\d{{4}})?\??$",
+        r"\bby\s+december\s+31(?:,\s*\d{4})?\??$",
+        r"\bby\s+\d{4}\??$",
+    ]
+
+    for pattern in patterns:
+        text = re.sub(pattern, "", text).strip()
+
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text or safe_str(question).lower().strip()
+
+
+
 def create_position(
     signal: Dict[str, Any],
     paper_size: float,
@@ -101,6 +141,7 @@ def create_position(
         "question": safe_str(signal.get("question")),
         "outcome": safe_str(signal.get("outcome")),
         "token_id": safe_str(signal.get("token_id")),
+        "event_key": normalize_event_key(safe_str(signal.get("question"))),
         "entry_price": entry_ask,
         "shares": round(shares, 4),
         "notional_usdc": round(shares * entry_ask, 4),
@@ -127,6 +168,7 @@ def close_position(
         "question": safe_str(position.get("question")),
         "outcome": safe_str(position.get("outcome")),
         "token_id": safe_str(position.get("token_id")),
+        "event_key": safe_str(position.get("event_key")),
         "entry_price": safe_float(position.get("entry_price")),
         "exit_price": exit_price,
         "shares": safe_float(position.get("shares")),
@@ -301,6 +343,8 @@ def run_portfolio_backtest(
     min_top_liquidity: float = 10.0,
     max_relative_spread_pct: float = 10.0,
     max_new_trades_per_cycle: int = 1,
+    max_event_group_positions: int = 1,
+    event_cooldown_cycles: int = 0,
     save_output: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -346,7 +390,11 @@ def run_portfolio_backtest(
     max_positions_count = 0
     
     # Process each timestamp
-    for timestamp in timestamps:
+    last_event_open_cycle: Dict[str, int] = {}
+    event_group_rejects = 0
+    cooldown_rejects = 0
+
+    for cycle_index, timestamp in enumerate(timestamps):
         # Filter data for current timestamp
         cycle_data = history[history["observed_dt"] == timestamp]
         
@@ -450,13 +498,34 @@ def run_portfolio_backtest(
                 if current_exposure + potential_exposure > max_total_exposure:
                     continue
                 
-                # Check if we already have a position in this question
+                # Check if we already have a position in this exact question
                 question = safe_str(signal.get("question"))
+                event_key = normalize_event_key(question)
+
                 already_positioned = any(
-                    safe_str(pos.get("question")) == question 
+                    safe_str(pos.get("question")) == question
                     for pos in open_positions
                 )
                 if already_positioned:
+                    continue
+
+                # Event-group exposure: avoid stacking multiple related markets.
+                same_event_positions = sum(
+                    1 for pos in open_positions
+                    if safe_str(pos.get("event_key")) == event_key
+                )
+                if max_event_group_positions >= 0 and same_event_positions >= max_event_group_positions:
+                    event_group_rejects += 1
+                    continue
+
+                # Cooldown by event group: avoid re-entering same theme too quickly.
+                last_open_cycle = last_event_open_cycle.get(event_key)
+                if (
+                    event_cooldown_cycles > 0
+                    and last_open_cycle is not None
+                    and cycle_index - last_open_cycle < event_cooldown_cycles
+                ):
+                    cooldown_rejects += 1
                     continue
                 
                 # Check if we have enough capital
@@ -466,7 +535,10 @@ def run_portfolio_backtest(
                 # Create new position
                 new_position = create_position(signal, paper_size, ask_price)
                 if new_position:
+                    new_position["event_key"] = event_key
                     open_positions.append(new_position)
+                    last_event_open_cycle[event_key] = cycle_index
+
                     current_capital -= paper_size
                     current_exposure += paper_size
                     new_trades_count += 1
@@ -546,6 +618,10 @@ def run_portfolio_backtest(
     # Add additional metrics to summary
     summary["max_exposure_used"] = round(max_exposure_used, 4)
     summary["max_positions_open"] = max_positions_count
+    summary["max_event_group_positions"] = max_event_group_positions
+    summary["event_cooldown_cycles"] = event_cooldown_cycles
+    summary["event_group_rejects"] = event_group_rejects
+    summary["cooldown_rejects"] = cooldown_rejects
     
     return {
         "history_path": str(history_path),
