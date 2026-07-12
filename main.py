@@ -21,6 +21,7 @@ from app.monitoring.health_check import run_health_check
 from app.backtesting.replay_audit import run_replay_audit
 from app.backtesting.paper_backtest import run_signal_backtest
 from app.backtesting.universe_report import calculate_universe_report
+from app.backtesting.portfolio_backtest import run_portfolio_backtest
 
 console = Console()
 DATA_DIR = Path("data")
@@ -1603,6 +1604,15 @@ BACKTEST_PROFILE_KEYS = [
 ]
 
 
+PORTFOLIO_BACKTEST_PROFILE_KEYS = [
+    "paper_min_score",
+    "paper_min_edge",
+    "paper_min_edge_delta",
+    "stop_loss",
+    "take_profit",
+]
+
+
 def apply_backtest_profile(args: argparse.Namespace) -> dict:
     profile = getattr(args, "profile", "normal")
 
@@ -1630,6 +1640,49 @@ def apply_backtest_profile(args: argparse.Namespace) -> dict:
     return applied
 
 
+def apply_portfolio_backtest_profile(args: argparse.Namespace) -> dict:
+    profile = getattr(args, "profile", "normal")
+
+    if profile == "custom":
+        return {}
+
+    if profile not in SUPERVISOR_PROFILES:
+        raise ValueError(f"Perfil desconocido: {profile}")
+
+    applied = {}
+
+    for attr in PORTFOLIO_BACKTEST_PROFILE_KEYS:
+        value = SUPERVISOR_PROFILES[profile].get(attr)
+        flag = PROFILE_FLAG_MAP.get(attr)
+
+        if value is None:
+            continue
+
+        if flag and cli_arg_was_provided(flag):
+            continue
+
+        setattr(args, attr, value)
+        applied[attr] = value
+
+    # Apply portfolio-specific defaults
+    portfolio_defaults = {
+        "initial_capital": {"conservative": 100.0, "normal": 100.0, "aggressive": 100.0},
+        "paper_size": {"conservative": 3.0, "normal": 5.0, "aggressive": 7.0},
+        "max_open_positions": {"conservative": 2, "normal": 3, "aggressive": 5},
+        "max_total_exposure": {"conservative": 10.0, "normal": 15.0, "aggressive": 25.0},
+        "max_new_trades_per_cycle": {"conservative": 1, "normal": 1, "aggressive": 2},
+    }
+
+    for param, defaults in portfolio_defaults.items():
+        flag = f"--{param.replace('_', '-')}"
+        if not cli_arg_was_provided(flag):
+            default_value = defaults.get(profile, getattr(args, param))
+            setattr(args, param, default_value)
+            applied[param] = default_value
+
+    return applied
+
+
 def print_backtest_profile(profile: str, applied: dict) -> None:
     console.print(f"[cyan]Backtest profile:[/cyan] {profile}")
 
@@ -1638,6 +1691,23 @@ def print_backtest_profile(profile: str, applied: dict) -> None:
         return
 
     table = Table(title=f"Backtest Profile: {profile}")
+    table.add_column("Parámetro")
+    table.add_column("Valor", justify="right")
+
+    for key, value in applied.items():
+        table.add_row(str(key), str(value))
+
+    console.print(table)
+
+
+def print_portfolio_backtest_profile(profile: str, applied: dict) -> None:
+    console.print(f"[cyan]Portfolio backtest profile:[/cyan] {profile}")
+
+    if not applied:
+        console.print("[yellow]Usando valores custom/manuales.[/yellow]")
+        return
+
+    table = Table(title=f"Portfolio Backtest Profile: {profile}")
     table.add_column("Parámetro")
     table.add_column("Valor", justify="right")
 
@@ -1857,6 +1927,111 @@ def run_universe_report_command(args: argparse.Namespace) -> None:
 
     print_universe_report(report, limit=args.limit)
 
+
+def print_portfolio_backtest_summary(result: dict) -> None:
+    summary = result.get("summary", {})
+
+    table = Table(title="Portfolio Backtest Summary")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+
+    table.add_row("Capital inicial", f"${summary.get('initial_capital', 0)}")
+    table.add_row("Capital final", f"${summary.get('final_capital', 0)}")
+    table.add_row("PnL total", f"${summary.get('total_pnl', 0)}")
+    table.add_row("ROI total", f"{summary.get('total_roi_pct', 0)}%")
+    table.add_row("Trades cerrados", str(summary.get("total_trades", 0)))
+    table.add_row("Wins", str(summary.get("wins", 0)))
+    table.add_row("Losses", str(summary.get("losses", 0)))
+    table.add_row("Breakeven", str(summary.get("breakeven", 0)))
+    table.add_row("Winrate", f"{summary.get('winrate_pct', 0)}%")
+    table.add_row("Max drawdown", f"{summary.get('max_drawdown', 0)}%")
+    table.add_row("Exposición máxima usada", f"${summary.get('max_exposure_used', 0)}")
+    table.add_row("Número máximo de posiciones abiertas", str(summary.get("max_positions_open", 0)))
+
+    console.print(table)
+
+    exit_reasons = summary.get("exit_reason_counts", {})
+
+    reason_table = Table(title="Motivos de salida")
+    reason_table.add_column("Motivo")
+    reason_table.add_column("Cantidad", justify="right")
+
+    if exit_reasons:
+        for reason, count in exit_reasons.items():
+            reason_table.add_row(str(reason), str(count))
+    else:
+        reason_table.add_row("Sin trades", "0")
+
+    console.print(reason_table)
+
+    top_trades = summary.get("top_trades", [])
+
+    trades_table = Table(title="Top 20 trades por ROI")
+    trades_table.add_column("#", justify="right")
+    trades_table.add_column("Entry")
+    trades_table.add_column("Exit")
+    trades_table.add_column("Reason")
+    trades_table.add_column("Outcome")
+    trades_table.add_column("EntryPx", justify="right")
+    trades_table.add_column("ExitPx", justify="right")
+    trades_table.add_column("PnL", justify="right")
+    trades_table.add_column("ROI%", justify="right")
+    trades_table.add_column("Pregunta", overflow="fold")
+
+    if top_trades:
+        for idx, trade in enumerate(top_trades, start=1):
+            trades_table.add_row(
+                str(idx),
+                str(trade.get("entry_time", "")),
+                str(trade.get("exit_time", "")),
+                str(trade.get("exit_reason", "")),
+                str(trade.get("outcome", "")),
+                str(trade.get("entry_price", "")),
+                str(trade.get("exit_price", "")),
+                str(trade.get("pnl_usdc", "")),
+                str(trade.get("roi_pct", "")),
+                str(trade.get("question", "")),
+            )
+    else:
+        trades_table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "No hubo trades.")
+
+    console.print(trades_table)
+
+
+def run_portfolio_backtest_command(args: argparse.Namespace) -> None:
+    applied_profile = apply_portfolio_backtest_profile(args)
+
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PORTFOLIO BACKTEST")
+    console.print("[cyan]Simula una cartera completa con gestión de posiciones. No toca API. No abre trades reales.[/cyan]\n")
+    console.print("[yellow]Solo lee data/orderbook_history.csv. Solo escribe archivos de backtest.[/yellow]\n")
+
+    print_portfolio_backtest_profile(args.profile, applied_profile)
+
+    result = run_portfolio_backtest(
+        history_path=Path(args.history_path),
+        trades_output_path=Path(args.output_path),
+        equity_output_path=Path("data/portfolio_equity_curve.csv"),
+        profile=args.profile,
+        paper_min_score=args.paper_min_score,
+        paper_min_edge=args.paper_min_edge,
+        paper_min_edge_delta=args.paper_min_edge_delta,
+        initial_capital=args.initial_capital,
+        paper_size=args.paper_size,
+        max_open_positions=args.max_open_positions,
+        max_total_exposure=args.max_total_exposure,
+        stop_loss=args.stop_loss,
+        take_profit=args.take_profit,
+        min_entry_price=args.min_entry_price,
+        max_entry_price=args.max_entry_price,
+        min_top_liquidity=args.min_top_liquidity,
+        max_relative_spread_pct=args.max_relative_spread_pct,
+        max_new_trades_per_cycle=args.max_new_trades_per_cycle,
+        save_output=not args.no_save,
+    )
+
+    print_portfolio_backtest_summary(result)
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -2059,6 +2234,27 @@ def build_parser() -> argparse.ArgumentParser:
     universe_report.add_argument("--history-path", default="data/orderbook_history.csv")
     universe_report.add_argument("--limit", type=int, default=15)
     universe_report.set_defaults(func=run_universe_report_command)
+
+    portfolio_backtest = subparsers.add_parser("portfolio-backtest", help="Simula una cartera completa con gestión de posiciones.")
+    portfolio_backtest.add_argument("--profile", choices=["custom", "conservative", "normal", "aggressive"], default="normal")
+    portfolio_backtest.add_argument("--history-path", default="data/orderbook_history.csv")
+    portfolio_backtest.add_argument("--output-path", default="data/portfolio_backtest_trades.csv")
+    portfolio_backtest.add_argument("--no-save", action="store_true", help="No guarda CSV de trades simulados.")
+    portfolio_backtest.add_argument("--paper-min-score", type=int, default=70)
+    portfolio_backtest.add_argument("--paper-min-edge", type=int, default=65)
+    portfolio_backtest.add_argument("--paper-min-edge-delta", type=float, default=0.005)
+    portfolio_backtest.add_argument("--initial-capital", type=float, default=100.0, help="Capital inicial en USDC.")
+    portfolio_backtest.add_argument("--paper-size", type=float, default=5.0, help="USDC simulado por trade.")
+    portfolio_backtest.add_argument("--max-open-positions", type=int, default=3, help="Máximo número de posiciones abiertas.")
+    portfolio_backtest.add_argument("--max-total-exposure", type=float, default=15.0, help="Exposición máxima total en USDC.")
+    portfolio_backtest.add_argument("--stop-loss", type=float, default=-20.0, help="ROI porcentual para stop-loss.")
+    portfolio_backtest.add_argument("--take-profit", type=float, default=25.0, help="ROI porcentual para take-profit.")
+    portfolio_backtest.add_argument("--min-entry-price", type=float, default=0.05)
+    portfolio_backtest.add_argument("--max-entry-price", type=float, default=0.90)
+    portfolio_backtest.add_argument("--min-top-liquidity", type=float, default=10.0)
+    portfolio_backtest.add_argument("--max-relative-spread-pct", type=float, default=10.0)
+    portfolio_backtest.add_argument("--max-new-trades-per-cycle", type=int, default=1, help="Máximo número de nuevas posiciones por ciclo.")
+    portfolio_backtest.set_defaults(func=run_portfolio_backtest_command)
 
     return parser
 
