@@ -258,6 +258,7 @@ def run_scan(args: argparse.Namespace) -> None:
                 event_limit=args.event_limit,
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
+                exclude_keywords=getattr(args, "exclude_keyword", []),
             )
             rows = attach_edge_scores(rows)
 
@@ -468,6 +469,7 @@ def run_cycle(args: argparse.Namespace) -> None:
                 event_limit=args.event_limit,
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
+                exclude_keywords=getattr(args, "exclude_keyword", []),
             )
             rows = attach_edge_scores(rows)
 
@@ -785,6 +787,7 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
                 event_limit=args.event_limit,
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
+                exclude_keywords=getattr(args, "exclude_keyword", []),
             )
 
             if not rows:
@@ -1119,6 +1122,7 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                     event_limit=args.event_limit,
                     market_limit=args.market_limit,
                     request_delay=args.request_delay,
+                    exclude_keywords=getattr(args, "exclude_keyword", []),
                 )
 
                 if not rows:
