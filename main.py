@@ -22,6 +22,7 @@ from app.backtesting.replay_audit import run_replay_audit
 from app.backtesting.paper_backtest import run_signal_backtest
 from app.backtesting.universe_report import calculate_universe_report
 from app.backtesting.portfolio_backtest import run_portfolio_backtest
+from app.backtesting.parameter_sweep import parse_number_list, run_parameter_sweep
 
 console = Console()
 DATA_DIR = Path("data")
@@ -2038,6 +2039,95 @@ def run_portfolio_backtest_command(args: argparse.Namespace) -> None:
 
     print_portfolio_backtest_summary(result)
 
+
+def print_parameter_sweep_summary(result: dict, limit: int = 20) -> None:
+    rows = result.get("results", [])
+
+    summary_table = Table(title="Parameter Sweep Summary")
+    summary_table.add_column("Métrica")
+    summary_table.add_column("Valor", justify="right")
+
+    summary_table.add_row("Historial", str(result.get("history_path", "")))
+    summary_table.add_row("Output", str(result.get("output_path", "")))
+    summary_table.add_row("Combinaciones probadas", str(result.get("runs", 0)))
+
+    console.print(summary_table)
+
+    table = Table(title=f"Top {limit} parameter sets")
+    table.add_column("#", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Edge", justify="right")
+    table.add_column("Delta", justify="right")
+    table.add_column("Cooldown", justify="right")
+    table.add_column("EventMax", justify="right")
+    table.add_column("Trades", justify="right")
+    table.add_column("Wins", justify="right")
+    table.add_column("Losses", justify="right")
+    table.add_column("Winrate", justify="right")
+    table.add_column("PnL", justify="right")
+    table.add_column("ROI%", justify="right")
+    table.add_column("MaxDD", justify="right")
+    table.add_column("Exposure", justify="right")
+
+    if rows:
+        for idx, row in enumerate(rows[:limit], start=1):
+            table.add_row(
+                str(idx),
+                str(row.get("paper_min_score", "")),
+                str(row.get("paper_min_edge", "")),
+                str(row.get("paper_min_edge_delta", "")),
+                str(row.get("event_cooldown_cycles", "")),
+                str(row.get("max_event_group_positions", "")),
+                str(row.get("trades", "")),
+                str(row.get("wins", "")),
+                str(row.get("losses", "")),
+                f"{row.get('winrate_pct', 0)}%",
+                f"${row.get('total_pnl', 0)}",
+                f"{row.get('total_roi_pct', 0)}%",
+                f"{row.get('max_drawdown', 0)}%",
+                f"${row.get('max_exposure_used', 0)}",
+            )
+    else:
+        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-")
+
+    console.print(table)
+
+
+def run_parameter_sweep_command(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] PARAMETER SWEEP")
+    console.print("[cyan]Prueba múltiples configuraciones sobre historial local. No toca API. No abre trades reales.[/cyan]\n")
+
+    scores = parse_number_list(args.scores, int)
+    edges = parse_number_list(args.edges, int)
+    deltas = parse_number_list(args.deltas, float)
+    cooldowns = parse_number_list(args.cooldowns, int)
+    event_group_max = parse_number_list(args.event_group_max, int)
+
+    result = run_parameter_sweep(
+        history_path=Path(args.history_path),
+        output_path=Path(args.output_path),
+        scores=scores,
+        edges=edges,
+        deltas=deltas,
+        cooldowns=cooldowns,
+        max_event_group_positions_values=event_group_max,
+        initial_capital=args.initial_capital,
+        paper_size=args.paper_size,
+        max_open_positions=args.max_open_positions,
+        max_total_exposure=args.max_total_exposure,
+        stop_loss=args.stop_loss,
+        take_profit=args.take_profit,
+        min_entry_price=args.min_entry_price,
+        max_entry_price=args.max_entry_price,
+        min_top_liquidity=args.min_top_liquidity,
+        max_relative_spread_pct=args.max_relative_spread_pct,
+        max_new_trades_per_cycle=args.max_new_trades_per_cycle,
+    )
+
+    print_parameter_sweep_summary(result, limit=args.limit)
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -2263,6 +2353,29 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio_backtest.add_argument("--max-event-group-positions", type=int, default=1, help="Máximo número de posiciones abiertas por tema/event-group.")
     portfolio_backtest.add_argument("--event-cooldown-cycles", type=int, default=0, help="Ciclos de espera antes de volver a abrir el mismo tema/event-group.")
     portfolio_backtest.set_defaults(func=run_portfolio_backtest_command)
+
+    parameter_sweep = subparsers.add_parser("parameter-sweep", help="Prueba múltiples configuraciones de portfolio-backtest.")
+    parameter_sweep.add_argument("--history-path", default="data/orderbook_history.csv")
+    parameter_sweep.add_argument("--output-path", default="data/parameter_sweep.csv")
+    parameter_sweep.add_argument("--scores", default="70,75,80,85")
+    parameter_sweep.add_argument("--edges", default="60,65,70,75,80")
+    parameter_sweep.add_argument("--deltas", default="0.003,0.005,0.01,0.015")
+    parameter_sweep.add_argument("--cooldowns", default="0,10,20,40")
+    parameter_sweep.add_argument("--event-group-max", default="1")
+    parameter_sweep.add_argument("--initial-capital", type=float, default=100.0)
+    parameter_sweep.add_argument("--paper-size", type=float, default=5.0)
+    parameter_sweep.add_argument("--max-open-positions", type=int, default=3)
+    parameter_sweep.add_argument("--max-total-exposure", type=float, default=15.0)
+    parameter_sweep.add_argument("--stop-loss", type=float, default=-20.0)
+    parameter_sweep.add_argument("--take-profit", type=float, default=25.0)
+    parameter_sweep.add_argument("--min-entry-price", type=float, default=0.05)
+    parameter_sweep.add_argument("--max-entry-price", type=float, default=0.90)
+    parameter_sweep.add_argument("--min-top-liquidity", type=float, default=10.0)
+    parameter_sweep.add_argument("--max-relative-spread-pct", type=float, default=10.0)
+    parameter_sweep.add_argument("--max-new-trades-per-cycle", type=int, default=1)
+    parameter_sweep.add_argument("--limit", type=int, default=20)
+    parameter_sweep.set_defaults(func=run_parameter_sweep_command)
+
 
     return parser
 
