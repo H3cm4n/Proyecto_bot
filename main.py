@@ -222,6 +222,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
         market_limit=args.market_limit,
         request_delay=args.request_delay,
         exclude_keywords=getattr(args, "exclude_keyword", []),
+        include_keywords=getattr(args, "include_keyword", []),
     )
     rows = attach_edge_scores(rows)
 
@@ -261,6 +262,7 @@ def run_scan(args: argparse.Namespace) -> None:
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
                 exclude_keywords=getattr(args, "exclude_keyword", []),
+                include_keywords=getattr(args, "include_keyword", []),
             )
             rows = attach_edge_scores(rows)
 
@@ -472,6 +474,7 @@ def run_cycle(args: argparse.Namespace) -> None:
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
                 exclude_keywords=getattr(args, "exclude_keyword", []),
+                include_keywords=getattr(args, "include_keyword", []),
             )
             rows = attach_edge_scores(rows)
 
@@ -571,6 +574,7 @@ def run_audit(args: argparse.Namespace) -> None:
         market_limit=args.market_limit,
         request_delay=args.request_delay,
         exclude_keywords=getattr(args, "exclude_keyword", []),
+        include_keywords=getattr(args, "include_keyword", []),
     )
 
     if not rows:
@@ -640,6 +644,7 @@ def run_propose(args: argparse.Namespace) -> None:
         market_limit=args.market_limit,
         request_delay=args.request_delay,
         exclude_keywords=getattr(args, "exclude_keyword", []),
+        include_keywords=getattr(args, "include_keyword", []),
     )
 
     if not rows:
@@ -790,6 +795,7 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
                 market_limit=args.market_limit,
                 request_delay=args.request_delay,
                 exclude_keywords=getattr(args, "exclude_keyword", []),
+                include_keywords=getattr(args, "include_keyword", []),
             )
 
             if not rows:
@@ -1125,6 +1131,7 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                     market_limit=args.market_limit,
                     request_delay=args.request_delay,
                     exclude_keywords=getattr(args, "exclude_keyword", []),
+                    include_keywords=getattr(args, "include_keyword", []),
                 )
 
                 if not rows:
@@ -2137,6 +2144,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         help="Excluye mercados cuya pregunta contenga esta palabra/frase. Puede repetirse.",
+    )
+    parser.add_argument(
+        "--include-keyword",
+        action="append",
+        default=[],
+        help="Incluye solo mercados cuya pregunta/título/slug contenga esta palabra/frase. Puede repetirse.",
     )
     parser.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
     parser.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")

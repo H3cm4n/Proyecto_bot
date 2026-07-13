@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 import time
 
@@ -38,6 +39,42 @@ def market_matches_excluded_keyword(market: dict, exclude_keywords: list[str] | 
     return False
 
 
+
+def market_text_for_keywords(market: dict) -> str:
+    return " ".join(
+        str(market.get(key) or "")
+        for key in ("question", "title", "slug")
+    ).lower()
+
+
+def market_matches_keyword(market: dict, keyword: str) -> bool:
+    text = market_text_for_keywords(market)
+    keyword = normalize_keyword(keyword)
+
+    if not keyword:
+        return False
+
+    # Short symbols like BTC, ETH, SOL, XRP should match as words, not inside other words.
+    if len(keyword) <= 3:
+        return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
+
+    return keyword in text
+
+
+def market_matches_included_keyword(market: dict, include_keywords: list[str] | None = None) -> bool:
+    if not include_keywords:
+        return True
+
+    return any(market_matches_keyword(market, keyword) for keyword in include_keywords)
+
+
+def filter_included_markets(markets: list[dict], include_keywords: list[str] | None = None) -> list[dict]:
+    if not include_keywords:
+        return markets
+
+    return [m for m in markets if market_matches_included_keyword(m, include_keywords)]
+
+
 def filter_excluded_markets(markets: list[dict], exclude_keywords: list[str] | None = None) -> list[dict]:
     if not exclude_keywords:
         return markets
@@ -52,6 +89,7 @@ def collect_orderbook_snapshot(
     market_limit: int = 10,
     request_delay: float = 0.25,
     exclude_keywords: list[str] | None = None,
+    include_keywords: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Lee mercados abiertos, consulta sus orderbooks y devuelve filas listas para CSV.
@@ -59,9 +97,15 @@ def collect_orderbook_snapshot(
     """
     DATA_DIR.mkdir(exist_ok=True)
 
-    events = get_active_events(limit=event_limit)
+    try:
+        events = get_active_events(limit=event_limit)
+    except Exception as exc:
+        print(f"WARN: No se pudieron obtener eventos de Gamma API: {exc}")
+        return []
+
     markets = extract_market_rows(events)
     markets = filter_excluded_markets(markets, exclude_keywords)
+    markets = filter_included_markets(markets, include_keywords)
 
     if markets:
         markets_df = pd.DataFrame(markets)
