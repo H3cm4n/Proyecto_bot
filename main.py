@@ -2222,6 +2222,8 @@ def print_crypto_signal_table(rows: list[dict]) -> None:
     table.add_column("Binance")
     table.add_column("Align")
     table.add_column("Action")
+    table.add_column("CScore", justify="right")
+    table.add_column("Decision")
     table.add_column("Bid", justify="right")
     table.add_column("Ask", justify="right")
     table.add_column("Score", justify="right")
@@ -2244,6 +2246,8 @@ def print_crypto_signal_table(rows: list[dict]) -> None:
             str(row.get("binance_bias", "")),
             str(row.get("crypto_alignment", "")),
             str(row.get("crypto_action", "")),
+            str(row.get("crypto_signal_score", "")),
+            str(row.get("crypto_decision", "")),
             str(row.get("best_bid", "")),
             str(row.get("best_ask", "")),
             str(row.get("score", "")),

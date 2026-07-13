@@ -227,9 +227,128 @@ def attach_crypto_signals(
             "crypto_action": crypto_action,
         }
 
+        crypto_score, crypto_decision, crypto_reasons = score_crypto_signal(enriched)
+
+        enriched["crypto_signal_score"] = crypto_score
+        enriched["crypto_decision"] = crypto_decision
+        enriched["crypto_decision_reasons"] = crypto_reasons
+
         enriched_rows.append(enriched)
 
     return enriched_rows
+
+
+
+def score_crypto_signal(row: dict[str, Any]) -> tuple[int, str, str]:
+    """
+    Score a combined Polymarket + Binance crypto signal.
+
+    This is still research-only. It does not execute trades.
+    """
+    reasons: list[str] = []
+    score = 0
+
+    alignment = safe_str(row.get("crypto_alignment"))
+    market_bias = safe_str(row.get("market_bias"))
+    binance_bias = safe_str(row.get("binance_bias"))
+    crypto_action = safe_str(row.get("crypto_action"))
+
+    ask = safe_float(row.get("best_ask"))
+    pm_score = safe_float(row.get("score"))
+    pm_edge = safe_float(row.get("edge_score"))
+    binance_bias_score = safe_float(row.get("binance_bias_score"))
+    top_liquidity = max(
+        safe_float(row.get("bid_size")),
+        safe_float(row.get("ask_size")),
+        safe_float(row.get("top_liquidity")),
+    )
+    rel_spread = safe_float(row.get("relative_spread_pct"))
+
+    if alignment == "ALIGNED":
+        score += 40
+        reasons.append("ALIGNED")
+    elif alignment == "CONFLICT":
+        score -= 50
+        reasons.append("CONFLICT")
+    elif alignment == "NEUTRAL":
+        score += 5
+        reasons.append("NEUTRAL")
+    else:
+        score -= 20
+        reasons.append(alignment or "UNKNOWN_ALIGNMENT")
+
+    if market_bias in ("BULLISH", "BEARISH"):
+        score += 10
+    else:
+        reasons.append("UNKNOWN_MARKET_BIAS")
+
+    if binance_bias in ("BULLISH", "BEARISH"):
+        score += min(30, abs(int(binance_bias_score)))
+    elif binance_bias == "NEUTRAL":
+        reasons.append("BINANCE_NEUTRAL")
+    else:
+        reasons.append("UNKNOWN_BINANCE_BIAS")
+
+    if pm_score >= 80:
+        score += 20
+    elif pm_score >= 70:
+        score += 10
+    elif pm_score >= 60:
+        score += 5
+    else:
+        reasons.append("PM_SCORE_LOW")
+
+    if pm_edge >= 75:
+        score += 20
+    elif pm_edge >= 60:
+        score += 10
+    elif pm_edge > 0:
+        score += 3
+    else:
+        reasons.append("PM_EDGE_LOW_OR_MISSING")
+
+    if ask < 0.05:
+        score -= 30
+        reasons.append("ENTRY_TOO_LOW")
+    elif ask > 0.90:
+        score -= 35
+        reasons.append("ENTRY_TOO_HIGH")
+    elif 0.10 <= ask <= 0.85:
+        score += 15
+    else:
+        score += 5
+
+    if top_liquidity >= 100:
+        score += 10
+    elif top_liquidity >= 25:
+        score += 5
+    elif top_liquidity > 0:
+        reasons.append("LOW_TOP_LIQUIDITY")
+    else:
+        reasons.append("NO_TOP_LIQUIDITY")
+
+    if rel_spread > 10:
+        score -= 25
+        reasons.append("REL_SPREAD_TOO_HIGH")
+    elif rel_spread > 0 and rel_spread <= 3:
+        score += 10
+
+    if alignment == "CONFLICT":
+        decision = "CRYPTO_AVOID_CONFLICT"
+    elif ask < 0.05:
+        decision = "CRYPTO_WATCH_ENTRY_TOO_LOW"
+    elif ask > 0.90:
+        decision = "CRYPTO_WATCH_ENTRY_TOO_HIGH"
+    elif alignment == "ALIGNED" and score >= 85:
+        decision = "CRYPTO_BUY_CANDIDATE"
+    elif alignment == "ALIGNED" and score >= 65:
+        decision = "CRYPTO_WATCH_ALIGNED"
+    elif alignment == "NEUTRAL":
+        decision = "CRYPTO_WAIT_NEUTRAL"
+    else:
+        decision = "CRYPTO_NO_SIGNAL"
+
+    return int(score), decision, ",".join(reasons)
 
 
 def save_crypto_signal_snapshot(
