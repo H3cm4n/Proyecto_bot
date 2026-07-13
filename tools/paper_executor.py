@@ -49,6 +49,7 @@ def load_trades(path: Path) -> pd.DataFrame:
 def main() -> None:
     snapshot_path = Path(sys.argv[1] if len(sys.argv) > 1 else SNAPSHOT_PATH)
     trades_path = Path(os.getenv("PAPER_TRADES_PATH", TRADES_PATH))
+    signal_journal_path = Path(os.getenv("SIGNAL_JOURNAL_PATH", "data/signal_journal.csv"))
 
     trade_usd = float(os.getenv("PAPER_TRADE_USD", "10"))
     take_profit = float(os.getenv("PAPER_TAKE_PROFIT", "0.15"))
@@ -59,6 +60,9 @@ def main() -> None:
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
     close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
     reentry_cooldown_minutes = int(os.getenv("PAPER_REENTRY_COOLDOWN_MINUTES", "30"))
+    require_signal_confirmation = os.getenv("PAPER_REQUIRE_SIGNAL_CONFIRMATION", "1") == "1"
+    confirmation_min_observations = int(os.getenv("PAPER_CONFIRMATION_MIN_OBSERVATIONS", "2"))
+    confirmation_lookback_minutes = int(os.getenv("PAPER_CONFIRMATION_LOOKBACK_MINUTES", "10"))
 
     if not snapshot_path.exists():
         raise SystemExit(f"No existe snapshot: {snapshot_path}")
@@ -70,6 +74,14 @@ def main() -> None:
 
     trades_path.parent.mkdir(parents=True, exist_ok=True)
     trades = load_trades(trades_path)
+
+    if signal_journal_path.exists():
+        try:
+            signal_journal = pd.read_csv(signal_journal_path)
+        except pd.errors.EmptyDataError:
+            signal_journal = pd.DataFrame()
+    else:
+        signal_journal = pd.DataFrame()
 
     # CSV safety: empty text columns like closed_at can be read as float64.
     # Force text-like columns to object so Pandas accepts ISO timestamps.
@@ -138,6 +150,35 @@ def main() -> None:
     if "fair_edge_to_ask" in buys.columns:
         buys = buys.sort_values("fair_edge_to_ask", ascending=False, na_position="last")
 
+    confirmation_blocked_count = 0
+
+    def previous_signal_observations(key: str) -> int:
+        if signal_journal.empty or "signal_key" not in signal_journal.columns:
+            return 0
+
+        journal = signal_journal.copy()
+
+        if "observed_at" in journal.columns:
+            journal["observed_at_dt"] = pd.to_datetime(
+                journal["observed_at"],
+                utc=True,
+                errors="coerce",
+            )
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=confirmation_lookback_minutes)
+            journal = journal[
+                journal["observed_at_dt"].notna()
+                & (journal["observed_at_dt"] >= cutoff)
+            ]
+
+        return int(journal["signal_key"].fillna("").astype(str).eq(key).sum())
+
+    def is_signal_confirmed(key: str) -> bool:
+        if not require_signal_confirmation:
+            return True
+
+        # +1 cuenta la señal del snapshot actual.
+        return previous_signal_observations(key) + 1 >= confirmation_min_observations
+
     for _, row in buys.iterrows():
         if len(new_trades) >= max_new_trades_per_cycle:
             break
@@ -153,6 +194,10 @@ def main() -> None:
             continue
 
         if key in cooldown_blocked_keys:
+            continue
+
+        if not is_signal_confirmed(key):
+            confirmation_blocked_count += 1
             continue
 
         ask = safe_float(row.get("best_ask"))
@@ -269,6 +314,9 @@ def main() -> None:
     print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
     print(f"Cooldown reentrada: {reentry_cooldown_minutes} min")
     print(f"Señales bloqueadas por cooldown: {len(cooldown_blocked_keys)}")
+    print(f"Confirmación requerida: {require_signal_confirmation}")
+    print(f"Confirmación mínima: {confirmation_min_observations} observaciones / {confirmation_lookback_minutes} min")
+    print(f"Señales bloqueadas por falta de confirmación: {confirmation_blocked_count}")
     print(f"Archivo: {trades_path}")
 
     if not trades.empty:
