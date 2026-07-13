@@ -198,3 +198,122 @@ def extract_direct_market_rows(markets: list[dict]) -> list[dict]:
 
     return rows
 
+
+
+def get_event_by_slug(slug: str) -> dict | None:
+    """
+    Fetch one full event by slug. Public-search returns event summaries,
+    but the full event contains the markets list.
+    """
+    if not slug:
+        return None
+
+    urls = [
+        f"{GAMMA_BASE_URL}/events/slug/{slug}",
+    ]
+
+    for url in urls:
+        try:
+            response = requests.get(url, timeout=20)
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            data = response.json()
+
+            if isinstance(data, dict):
+                return data
+
+            if isinstance(data, list) and data:
+                first = data[0]
+                if isinstance(first, dict):
+                    return first
+
+        except Exception:
+            continue
+
+    # Fallback: query parameter form.
+    try:
+        response = requests.get(
+            f"{GAMMA_BASE_URL}/events",
+            params={"slug": slug},
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, list) and data:
+            return data[0]
+
+        if isinstance(data, dict):
+            events = data.get("events") or data.get("data") or data.get("results")
+            if isinstance(events, list) and events:
+                return events[0]
+            return data
+
+    except Exception:
+        return None
+
+    return None
+
+
+def search_events(query: str, limit: int = 10) -> list[dict]:
+    """
+    Search Gamma public-search and return event summaries.
+    """
+    response = requests.get(
+        f"{GAMMA_BASE_URL}/public-search",
+        params={"q": query},
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    if not isinstance(data, dict):
+        return []
+
+    events = data.get("events") or []
+
+    if not isinstance(events, list):
+        return []
+
+    return events[:limit]
+
+
+def get_events_from_search_queries(
+    queries: list[str],
+    limit_per_query: int = 10,
+) -> list[dict]:
+    """
+    Search events by query, then hydrate each event by slug so markets are available.
+    """
+    hydrated_events: list[dict] = []
+    seen_slugs: set[str] = set()
+
+    for query in queries:
+        summaries = search_events(query, limit=limit_per_query)
+
+        for summary in summaries:
+            if not isinstance(summary, dict):
+                continue
+
+            slug = summary.get("slug")
+            if not slug or slug in seen_slugs:
+                continue
+
+            seen_slugs.add(slug)
+
+            # Skip obviously closed events from the search summary.
+            if summary.get("closed") is True:
+                continue
+
+            event = get_event_by_slug(slug)
+            if not event:
+                continue
+
+            if event.get("closed") is True:
+                continue
+
+            hydrated_events.append(event)
+
+    return hydrated_events
+

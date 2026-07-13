@@ -6,7 +6,7 @@ import time
 
 import pandas as pd
 
-from app.data.polymarket_gamma import get_active_events, extract_market_rows, get_active_markets, extract_direct_market_rows
+from app.data.polymarket_gamma import get_active_events, extract_market_rows, get_active_markets, extract_direct_market_rows, get_events_from_search_queries
 from app.data.polymarket_clob import get_orderbook, summarize_orderbook
 from app.signals.orderbook_signal import classify_orderbook
 from app.signals.scoring import score_orderbook_row
@@ -213,7 +213,8 @@ def collect_orderbook_snapshot(
     exclude_keywords: list[str] | None = None,
     include_keywords: list[str] | None = None,
     market_profile: str | None = None,
-    gamma_source: str = "events",) -> list[dict[str, Any]]:
+    gamma_source: str = "events",
+    search_queries: list[str] | None = None,) -> list[dict[str, Any]]:
     """
     Lee mercados abiertos, consulta sus orderbooks y devuelve filas listas para CSV.
     Modo seguro: solo lectura.
@@ -226,6 +227,17 @@ def collect_orderbook_snapshot(
         if source == "markets":
             raw_markets = get_active_markets(limit=event_limit)
             markets = extract_direct_market_rows(raw_markets)
+        elif source == "search":
+            queries = search_queries or [
+                "bitcoin",
+                "btc",
+                "ethereum",
+                "eth",
+                "solana",
+                "xrp",
+            ]
+            events = get_events_from_search_queries(queries, limit_per_query=10)
+            markets = extract_market_rows(events)
         else:
             events = get_active_events(limit=event_limit)
             markets = extract_market_rows(events)

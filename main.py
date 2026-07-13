@@ -227,6 +227,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
         gamma_source=getattr(args, "gamma_source", "events"),
+        search_queries=getattr(args, "search_query", None),
     )
     rows = attach_edge_scores(rows)
 
@@ -269,6 +270,7 @@ def run_scan(args: argparse.Namespace) -> None:
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
                 gamma_source=getattr(args, "gamma_source", "events"),
+                search_queries=getattr(args, "search_query", None),
             )
             rows = attach_edge_scores(rows)
 
@@ -483,6 +485,7 @@ def run_cycle(args: argparse.Namespace) -> None:
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
                 gamma_source=getattr(args, "gamma_source", "events"),
+                search_queries=getattr(args, "search_query", None),
             )
             rows = attach_edge_scores(rows)
 
@@ -585,6 +588,7 @@ def run_audit(args: argparse.Namespace) -> None:
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
         gamma_source=getattr(args, "gamma_source", "events"),
+        search_queries=getattr(args, "search_query", None),
     )
 
     if not rows:
@@ -657,6 +661,7 @@ def run_propose(args: argparse.Namespace) -> None:
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
         gamma_source=getattr(args, "gamma_source", "events"),
+        search_queries=getattr(args, "search_query", None),
     )
 
     if not rows:
@@ -810,6 +815,7 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
                 gamma_source=getattr(args, "gamma_source", "events"),
+                search_queries=getattr(args, "search_query", None),
             )
 
             if not rows:
@@ -1148,6 +1154,7 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                     include_keywords=getattr(args, "include_keyword", []),
                     market_profile=getattr(args, "market_profile", "all"),
                     gamma_source=getattr(args, "gamma_source", "events"),
+                    search_queries=getattr(args, "search_query", None),
                 )
 
                 if not rows:
@@ -2286,6 +2293,7 @@ def run_crypto_snapshot(args: argparse.Namespace) -> None:
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "crypto-price"),
         gamma_source=getattr(args, "gamma_source", "events"),
+        search_queries=getattr(args, "search_query", None),
     )
 
     polymarket_rows = attach_edge_scores(polymarket_rows)
@@ -2408,6 +2416,7 @@ def run_crypto_scan(args: argparse.Namespace) -> None:
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "crypto-price"),
                 gamma_source=getattr(args, "gamma_source", "events"),
+                search_queries=getattr(args, "search_query", None),
             )
 
             polymarket_rows = attach_edge_scores(polymarket_rows)
@@ -2499,8 +2508,14 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gamma-source",
         default="events",
-        choices=["events", "markets"],
-        help="Fuente Gamma para descubrir mercados: events o markets.",
+        choices=["events", "markets", "search"],
+        help="Fuente Gamma para descubrir mercados: events, markets o search.",
+    )
+    parser.add_argument(
+        "--search-query",
+        action="append",
+        default=None,
+        help="Query para gamma-source=search. Puede repetirse, por ejemplo: --search-query bitcoin --search-query ethereum.",
     )
     parser.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
     parser.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
