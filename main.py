@@ -8,6 +8,7 @@ from rich.table import Table
 
 from app.config import settings
 from app.data.binance_public import get_crypto_market_snapshot, save_crypto_market_snapshot
+from app.signals.crypto_signal import attach_crypto_signals, save_crypto_signal_snapshot
 from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
@@ -2211,6 +2212,90 @@ def run_binance_price(args: argparse.Namespace) -> None:
     console.print(f"Filas obtenidas: {len(rows)}")
 
 
+
+def print_crypto_signal_table(rows: list[dict]) -> None:
+    table = Table(title="Crypto Signal Snapshot")
+    table.add_column("#", justify="right")
+    table.add_column("Symbol")
+    table.add_column("Outcome")
+    table.add_column("Bias")
+    table.add_column("Binance")
+    table.add_column("Align")
+    table.add_column("Action")
+    table.add_column("Bid", justify="right")
+    table.add_column("Ask", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Edge", justify="right")
+    table.add_column("ΔMid", justify="right")
+    table.add_column("B 5m%", justify="right")
+    table.add_column("B 15m%", justify="right")
+    table.add_column("B Win%", justify="right")
+    table.add_column("Pregunta")
+
+    if not rows:
+        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "No hubo filas crypto.")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("crypto_symbol", "")),
+            str(row.get("outcome", "")),
+            str(row.get("market_bias", "")),
+            str(row.get("binance_bias", "")),
+            str(row.get("crypto_alignment", "")),
+            str(row.get("crypto_action", "")),
+            str(row.get("best_bid", "")),
+            str(row.get("best_ask", "")),
+            str(row.get("score", "")),
+            str(row.get("edge_score", "")),
+            str(row.get("edge_mid_delta", "")),
+            str(row.get("binance_momentum_5m_pct", "")),
+            str(row.get("binance_momentum_15m_pct", "")),
+            str(row.get("binance_window_pct", "")),
+            str(row.get("question", ""))[:48],
+        )
+
+    console.print(table)
+
+
+def run_crypto_snapshot(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] CRYPTO SIGNAL SNAPSHOT")
+    console.print("[cyan]Cruza Polymarket crypto-price con Binance public feed. Solo lectura. No abre trades reales.[/cyan]\n")
+
+    symbols = parse_symbol_list(args.symbols)
+
+    polymarket_rows = collect_orderbook_snapshot(
+        event_limit=args.event_limit,
+        market_limit=args.market_limit,
+        request_delay=args.request_delay,
+        exclude_keywords=getattr(args, "exclude_keyword", []),
+        include_keywords=getattr(args, "include_keyword", []),
+        market_profile=getattr(args, "market_profile", "crypto-price"),
+    )
+
+    binance_rows = get_crypto_market_snapshot(
+        symbols=symbols,
+        interval=args.interval,
+        kline_limit=args.kline_limit,
+        timeout=args.timeout,
+    )
+
+    enriched_rows = attach_crypto_signals(polymarket_rows, binance_rows)
+
+    output_path = save_crypto_signal_snapshot(
+        enriched_rows,
+        output_path=args.output_path,
+        append=args.append,
+    )
+
+    print_crypto_signal_table(enriched_rows)
+    console.print(f"\nCrypto signal snapshot guardado en: [bold]{output_path}[/bold]")
+    console.print(f"Filas Polymarket: {len(polymarket_rows)}")
+    console.print(f"Filas Binance: {len(binance_rows)}")
+    console.print(f"Filas combinadas: {len(enriched_rows)}")
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -2480,6 +2565,17 @@ def build_parser() -> argparse.ArgumentParser:
     binance_price.add_argument("--output-path", default="data/binance_crypto_snapshot.csv")
     binance_price.add_argument("--append", action="store_true")
     binance_price.set_defaults(func=run_binance_price)
+
+
+    crypto_snapshot = subparsers.add_parser("crypto-snapshot", help="Cruza mercados crypto-price de Polymarket con Binance.")
+    add_common_args(crypto_snapshot)
+    crypto_snapshot.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT")
+    crypto_snapshot.add_argument("--interval", default="1m")
+    crypto_snapshot.add_argument("--kline-limit", type=int, default=60)
+    crypto_snapshot.add_argument("--timeout", type=float, default=10.0)
+    crypto_snapshot.add_argument("--output-path", default="data/crypto_signal_snapshot.csv")
+    crypto_snapshot.add_argument("--append", action="store_true")
+    crypto_snapshot.set_defaults(func=run_crypto_snapshot, market_profile="crypto-price")
 
 
     return parser
