@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import settings
+from app.data.binance_public import get_crypto_market_snapshot, save_crypto_market_snapshot
 from app.scanner import collect_orderbook_snapshot, save_snapshot
 from app.execution.paper_broker import generate_paper_buys
 from app.execution.paper_portfolio import mark_open_trades_to_market, save_portfolio_snapshot
@@ -2142,6 +2143,74 @@ def run_parameter_sweep_command(args: argparse.Namespace) -> None:
     print_parameter_sweep_summary(result, limit=args.limit)
 
 
+
+def parse_symbol_list(value: str) -> list[str]:
+    return [
+        item.strip().upper()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+
+def print_binance_price_table(rows: list[dict]) -> None:
+    table = Table(title="Binance Public Crypto Feed")
+    table.add_column("#", justify="right")
+    table.add_column("Symbol")
+    table.add_column("Status")
+    table.add_column("Price", justify="right")
+    table.add_column("24h%", justify="right")
+    table.add_column("Mom 5m%", justify="right")
+    table.add_column("Mom 15m%", justify="right")
+    table.add_column("Window%", justify="right")
+    table.add_column("Range%", justify="right")
+    table.add_column("VWAP", justify="right")
+    table.add_column("QuoteVol", justify="right")
+    table.add_column("Error")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("symbol", "")),
+            str(row.get("status", "")),
+            str(row.get("price", 0)),
+            str(row.get("price_change_pct_24h", 0)),
+            str(row.get("momentum_5m_pct", 0)),
+            str(row.get("momentum_15m_pct", 0)),
+            str(row.get("momentum_full_window_pct", 0)),
+            str(row.get("range_full_window_pct", 0)),
+            str(row.get("vwap_full_window", 0)),
+            str(row.get("quote_volume_full_window", 0)),
+            str(row.get("error", ""))[:60],
+        )
+
+    console.print(table)
+
+
+def run_binance_price(args: argparse.Namespace) -> None:
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] BINANCE PUBLIC PRICE FEED")
+    console.print("[cyan]Solo lectura. No usa API key. No usa wallet. No abre trades reales.[/cyan]\n")
+
+    symbols = parse_symbol_list(args.symbols)
+
+    rows = get_crypto_market_snapshot(
+        symbols=symbols,
+        interval=args.interval,
+        kline_limit=args.kline_limit,
+        timeout=args.timeout,
+    )
+
+    output_path = save_crypto_market_snapshot(
+        rows,
+        output_path=args.output_path,
+        append=args.append,
+    )
+
+    print_binance_price_table(rows)
+    console.print(f"\nSnapshot Binance guardado en: [bold]{output_path}[/bold]")
+    console.print(f"Filas obtenidas: {len(rows)}")
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -2401,6 +2470,16 @@ def build_parser() -> argparse.ArgumentParser:
     parameter_sweep.add_argument("--max-new-trades-per-cycle", type=int, default=1)
     parameter_sweep.add_argument("--limit", type=int, default=20)
     parameter_sweep.set_defaults(func=run_parameter_sweep_command)
+
+
+    binance_price = subparsers.add_parser("binance-price", help="Consulta precios públicos de Binance para crypto.")
+    binance_price.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT")
+    binance_price.add_argument("--interval", default="1m")
+    binance_price.add_argument("--kline-limit", type=int, default=60)
+    binance_price.add_argument("--timeout", type=float, default=10.0)
+    binance_price.add_argument("--output-path", default="data/binance_crypto_snapshot.csv")
+    binance_price.add_argument("--append", action="store_true")
+    binance_price.set_defaults(func=run_binance_price)
 
 
     return parser
