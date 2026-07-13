@@ -157,12 +157,21 @@ def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
     spread = safe_float(row.get("spread"))
     score = safe_float(row.get("score")) or 0.0
     edge = safe_float(row.get("fair_edge_to_ask"))
+    distance_pct = safe_float(row.get("distance_to_threshold_pct"))
 
     if market_kind != "above_date":
         return {
             "fair_decision": "CRYPTO_IGNORE_NOT_ABOVE_DATE",
             "fair_signal_score": 0,
             "fair_decision_reasons": "NOT_ABOVE_DATE",
+        }
+
+    # First hard venue filter: no executable orderbook, no trade.
+    if ask is None or bid is None:
+        return {
+            "fair_decision": "CRYPTO_IGNORE_INCOMPLETE_ORDERBOOK",
+            "fair_signal_score": 0,
+            "fair_decision_reasons": "INCOMPLETE_ORDERBOOK",
         }
 
     if status != "OK" or edge is None:
@@ -172,22 +181,9 @@ def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
             "fair_decision_reasons": "NO_FAIR_VALUE",
         }
 
-    # Hard safety filter: Polymarket cannot be used as a venue
-    # if there is no complete executable orderbook.
-    if ask is None or bid is None:
-        return {
-            "fair_decision": "CRYPTO_IGNORE_INCOMPLETE_ORDERBOOK",
-            "fair_signal_score": 0,
-            "fair_decision_reasons": "INCOMPLETE_ORDERBOOK",
-        }
-
-    reasons: list[str] = []
-
     fair_signal_score = int(round((edge * 100.0) + min(score, 100.0)))
 
-    # Binance-first rule:
-    # If the real market signal conflicts with the outcome direction,
-    # do not buy even if the naive fair value model says there is edge.
+    # Binance-first rule: no real-market alignment, no trade.
     if alignment == "CONFLICT":
         return {
             "fair_decision": "CRYPTO_AVOID_BINANCE_CONFLICT",
@@ -195,42 +191,65 @@ def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
             "fair_decision_reasons": "BINANCE_CONFLICT",
         }
 
-    if ask < 0.05:
+    if alignment != "ALIGNED":
+        return {
+            "fair_decision": "CRYPTO_WAIT_BINANCE_NOT_ALIGNED",
+            "fair_signal_score": fair_signal_score,
+            "fair_decision_reasons": "BINANCE_NOT_ALIGNED",
+        }
+
+    # Real-market relevance: reject strikes too far from Binance spot.
+    if distance_pct is None:
+        return {
+            "fair_decision": "CRYPTO_IGNORE_NO_DISTANCE",
+            "fair_signal_score": fair_signal_score,
+            "fair_decision_reasons": "NO_DISTANCE_TO_THRESHOLD",
+        }
+
+    if abs(distance_pct) > 3.0:
+        return {
+            "fair_decision": "CRYPTO_IGNORE_THRESHOLD_TOO_FAR",
+            "fair_signal_score": fair_signal_score,
+            "fair_decision_reasons": "THRESHOLD_TOO_FAR_FROM_SPOT",
+        }
+
+    # Avoid lottery tickets and expensive near-certainties.
+    if ask < 0.10:
         return {
             "fair_decision": "CRYPTO_IGNORE_ASK_TOO_LOW",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "ASK_TOO_LOW",
         }
 
-    if ask > 0.85:
+    if ask > 0.70:
         return {
             "fair_decision": "CRYPTO_AVOID_ASK_TOO_HIGH",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "ASK_TOO_HIGH",
         }
 
-    if spread is not None and spread > 0.03:
+    if spread is not None and spread > 0.02:
         return {
             "fair_decision": "CRYPTO_WAIT_SPREAD_TOO_WIDE",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "SPREAD_TOO_WIDE",
         }
 
-    if score < 60:
+    if score < 70:
         return {
             "fair_decision": "CRYPTO_WAIT_LOW_ORDERBOOK_SCORE",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "LOW_ORDERBOOK_SCORE",
         }
 
-    if edge >= 0.10:
+    if edge >= 0.12:
         return {
             "fair_decision": "CRYPTO_BUY_FAIR_EDGE",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "FAIR_EDGE_STRONG",
         }
 
-    if edge >= 0.04:
+    if edge >= 0.06:
         return {
             "fair_decision": "CRYPTO_WATCH_FAIR_EDGE",
             "fair_signal_score": fair_signal_score,
