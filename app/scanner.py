@@ -6,7 +6,7 @@ import time
 
 import pandas as pd
 
-from app.data.polymarket_gamma import get_active_events, extract_market_rows
+from app.data.polymarket_gamma import get_active_events, extract_market_rows, get_active_markets, extract_direct_market_rows
 from app.data.polymarket_clob import get_orderbook, summarize_orderbook
 from app.signals.orderbook_signal import classify_orderbook
 from app.signals.scoring import score_orderbook_row
@@ -212,20 +212,26 @@ def collect_orderbook_snapshot(
     request_delay: float = 0.25,
     exclude_keywords: list[str] | None = None,
     include_keywords: list[str] | None = None,
-    market_profile: str | None = None,) -> list[dict[str, Any]]:
+    market_profile: str | None = None,
+    gamma_source: str = "events",) -> list[dict[str, Any]]:
     """
     Lee mercados abiertos, consulta sus orderbooks y devuelve filas listas para CSV.
     Modo seguro: solo lectura.
     """
     DATA_DIR.mkdir(exist_ok=True)
 
-    try:
-        events = get_active_events(limit=event_limit)
-    except Exception as exc:
-        print(f"WARN: No se pudieron obtener eventos de Gamma API: {exc}")
-        return []
+    source = normalize_keyword(gamma_source or "events")
 
-    markets = extract_market_rows(events)
+    try:
+        if source == "markets":
+            raw_markets = get_active_markets(limit=event_limit)
+            markets = extract_direct_market_rows(raw_markets)
+        else:
+            events = get_active_events(limit=event_limit)
+            markets = extract_market_rows(events)
+    except Exception as exc:
+        print(f"WARN: No se pudieron obtener datos de Gamma API ({source}): {exc}")
+        return []
     markets = filter_excluded_markets(markets, exclude_keywords)
     markets = filter_included_markets(markets, include_keywords)
     markets = filter_market_profile(markets, market_profile)

@@ -110,3 +110,91 @@ def extract_market_rows(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
 
     return rows
+
+
+def get_active_markets(limit: int = 100, offset: int = 0) -> list[dict]:
+    """
+    Fetch active markets directly from Gamma /markets.
+
+    This is useful when /events does not surface enough standalone
+    short-term or category-specific markets.
+    """
+    response = requests.get(
+        f"{GAMMA_BASE_URL}/markets",
+        params={
+            "active": "true",
+            "closed": "false",
+            "limit": limit,
+            "offset": offset,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        for key in ("markets", "data", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+
+    return []
+
+
+def extract_direct_market_rows(markets: list[dict]) -> list[dict]:
+    """
+    Normalize Gamma /markets rows into the same shape used by scanner.
+    """
+    rows: list[dict] = []
+
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+
+        active = bool(market.get("active", True))
+        closed = bool(market.get("closed", False))
+        archived = bool(market.get("archived", False))
+
+        if not active or closed or archived:
+            continue
+
+        question = (
+            market.get("question")
+            or market.get("title")
+            or market.get("groupItemTitle")
+            or ""
+        )
+
+        if not question:
+            continue
+
+        outcomes = parse_json_field(market.get("outcomes"))
+        outcome_prices = parse_json_field(market.get("outcomePrices"))
+        clob_token_ids = parse_json_field(market.get("clobTokenIds"))
+
+        if not outcomes or not clob_token_ids:
+            continue
+
+        rows.append(
+            {
+                "question": question,
+                "title": market.get("title") or question,
+                "slug": market.get("slug") or "",
+                "condition_id": market.get("conditionId") or market.get("condition_id") or "",
+                "market_id": market.get("id") or "",
+                "event_slug": market.get("eventSlug") or "",
+                "outcomes": outcomes,
+                "outcome_prices": outcome_prices,
+                "clob_token_ids": clob_token_ids,
+                "volume": market.get("volume") or market.get("volumeNum") or 0,
+                "liquidity": market.get("liquidity") or market.get("liquidityNum") or 0,
+                "end_date": market.get("endDate") or market.get("end_date") or "",
+                "start_date": market.get("startDate") or market.get("start_date") or "",
+            }
+        )
+
+    return rows
+

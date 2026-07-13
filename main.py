@@ -226,6 +226,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
         exclude_keywords=getattr(args, "exclude_keyword", []),
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
+        gamma_source=getattr(args, "gamma_source", "events"),
     )
     rows = attach_edge_scores(rows)
 
@@ -267,6 +268,7 @@ def run_scan(args: argparse.Namespace) -> None:
                 exclude_keywords=getattr(args, "exclude_keyword", []),
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
+                gamma_source=getattr(args, "gamma_source", "events"),
             )
             rows = attach_edge_scores(rows)
 
@@ -480,6 +482,7 @@ def run_cycle(args: argparse.Namespace) -> None:
                 exclude_keywords=getattr(args, "exclude_keyword", []),
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
+                gamma_source=getattr(args, "gamma_source", "events"),
             )
             rows = attach_edge_scores(rows)
 
@@ -581,6 +584,7 @@ def run_audit(args: argparse.Namespace) -> None:
         exclude_keywords=getattr(args, "exclude_keyword", []),
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
+        gamma_source=getattr(args, "gamma_source", "events"),
     )
 
     if not rows:
@@ -652,6 +656,7 @@ def run_propose(args: argparse.Namespace) -> None:
         exclude_keywords=getattr(args, "exclude_keyword", []),
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "all"),
+        gamma_source=getattr(args, "gamma_source", "events"),
     )
 
     if not rows:
@@ -804,6 +809,7 @@ def run_proposal_cycle(args: argparse.Namespace) -> None:
                 exclude_keywords=getattr(args, "exclude_keyword", []),
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "all"),
+                gamma_source=getattr(args, "gamma_source", "events"),
             )
 
             if not rows:
@@ -1141,6 +1147,7 @@ def run_paper_supervisor(args: argparse.Namespace) -> None:
                     exclude_keywords=getattr(args, "exclude_keyword", []),
                     include_keywords=getattr(args, "include_keyword", []),
                     market_profile=getattr(args, "market_profile", "all"),
+                    gamma_source=getattr(args, "gamma_source", "events"),
                 )
 
                 if not rows:
@@ -2278,6 +2285,7 @@ def run_crypto_snapshot(args: argparse.Namespace) -> None:
         exclude_keywords=getattr(args, "exclude_keyword", []),
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "crypto-price"),
+        gamma_source=getattr(args, "gamma_source", "events"),
     )
 
     polymarket_rows = attach_edge_scores(polymarket_rows)
@@ -2399,6 +2407,7 @@ def run_crypto_scan(args: argparse.Namespace) -> None:
                 exclude_keywords=getattr(args, "exclude_keyword", []),
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "crypto-price"),
+                gamma_source=getattr(args, "gamma_source", "events"),
             )
 
             polymarket_rows = attach_edge_scores(polymarket_rows)
@@ -2486,6 +2495,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         default="all",
         choices=["all", "crypto-price"],
         help="Perfil de universo de mercados. Usa crypto-price para mercados crypto basados en precio.",
+    )
+    parser.add_argument(
+        "--gamma-source",
+        default="events",
+        choices=["events", "markets"],
+        help="Fuente Gamma para descubrir mercados: events o markets.",
     )
     parser.add_argument("--alerts", action="store_true", help="Oculta acciones IGNORE.")
     parser.add_argument("--min-score", type=int, default=0, help="Score mínimo a mostrar.")
