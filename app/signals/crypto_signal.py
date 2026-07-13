@@ -359,11 +359,20 @@ def save_crypto_signal_snapshot(
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Do not create empty CSV files. Empty files break pd.read_csv later.
+    if not rows:
+        return path
+
     df = pd.DataFrame(rows)
 
-    if append and path.exists():
-        existing = pd.read_csv(path)
-        df = pd.concat([existing, df], ignore_index=True)
+    if append and path.exists() and path.stat().st_size > 0:
+        try:
+            existing = pd.read_csv(path)
+            if not existing.empty:
+                df = pd.concat([existing, df], ignore_index=True)
+        except pd.errors.EmptyDataError:
+            # Previous run may have left an empty file. Treat it as no history.
+            pass
 
     df.to_csv(path, index=False)
 

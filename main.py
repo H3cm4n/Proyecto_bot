@@ -2419,11 +2419,12 @@ def run_crypto_scan(args: argparse.Namespace) -> None:
 
             enriched_rows = attach_crypto_signals(polymarket_rows, binance_rows)
 
-            save_crypto_signal_snapshot(
-                enriched_rows,
-                output_path=args.output_path,
-                append=True,
-            )
+            if enriched_rows:
+                save_crypto_signal_snapshot(
+                    enriched_rows,
+                    output_path=args.output_path,
+                    append=True,
+                )
 
             summary = summarize_crypto_scan_rows(enriched_rows)
 
@@ -2442,8 +2443,15 @@ def run_crypto_scan(args: argparse.Namespace) -> None:
             if not args.quiet:
                 print_crypto_scan_cycle_table(enriched_rows)
 
-            console.print(f"Historial crypto actualizado: [bold]{args.output_path}[/bold]")
-            console.print(f"Historial orderbook actualizado: [bold]{args.orderbook_history_path}[/bold]")
+            if enriched_rows:
+                console.print(f"Historial crypto actualizado: [bold]{args.output_path}[/bold]")
+            else:
+                console.print("[yellow]No hubo filas combinadas; no se escribió historial crypto en este ciclo.[/yellow]")
+
+            if polymarket_rows:
+                console.print(f"Historial orderbook actualizado: [bold]{args.orderbook_history_path}[/bold]")
+            else:
+                console.print("[yellow]No hubo filas Polymarket; no se escribió historial orderbook en este ciclo.[/yellow]")
 
         except KeyboardInterrupt:
             console.print("\n[yellow]Crypto scan detenido por usuario.[/yellow]")
