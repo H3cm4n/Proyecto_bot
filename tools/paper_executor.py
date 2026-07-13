@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -58,6 +58,7 @@ def main() -> None:
     max_exposure_usd = float(os.getenv("PAPER_MAX_EXPOSURE_USD", "30"))
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
     close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
+    reentry_cooldown_minutes = int(os.getenv("PAPER_REENTRY_COOLDOWN_MINUTES", "30"))
 
     if not snapshot_path.exists():
         raise SystemExit(f"No existe snapshot: {snapshot_path}")
@@ -97,6 +98,29 @@ def main() -> None:
             trades.loc[trades["status"].eq("OPEN"), "signal_key"].astype(str)
         )
 
+    cooldown_blocked_keys = set()
+
+    if (
+        not trades.empty
+        and reentry_cooldown_minutes > 0
+        and {"status", "signal_key", "closed_at"}.issubset(trades.columns)
+    ):
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=reentry_cooldown_minutes)
+
+        closed = trades.loc[trades["status"].eq("CLOSED")].copy()
+        closed["closed_at_dt"] = pd.to_datetime(
+            closed["closed_at"],
+            utc=True,
+            errors="coerce",
+        )
+
+        recent_closed = closed[
+            closed["closed_at_dt"].notna()
+            & (closed["closed_at_dt"] >= cutoff)
+        ]
+
+        cooldown_blocked_keys = set(recent_closed["signal_key"].astype(str))
+
     new_trades = []
 
     open_trades_count = 0
@@ -126,6 +150,9 @@ def main() -> None:
         key = signal_key(row)
 
         if key in existing_open_keys:
+            continue
+
+        if key in cooldown_blocked_keys:
             continue
 
         ask = safe_float(row.get("best_ask"))
@@ -240,6 +267,8 @@ def main() -> None:
     print(f"Máximo posiciones abiertas: {max_open_trades}")
     print(f"Máximo nuevas entradas/ciclo: {max_new_trades_per_cycle}")
     print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
+    print(f"Cooldown reentrada: {reentry_cooldown_minutes} min")
+    print(f"Señales bloqueadas por cooldown: {len(cooldown_blocked_keys)}")
     print(f"Archivo: {trades_path}")
 
     if not trades.empty:

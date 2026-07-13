@@ -56,7 +56,13 @@ def build_trade_state(trades: pd.DataFrame) -> dict[str, dict]:
         return state
 
     for _, row in trades.iterrows():
-        key = signal_key(row)
+        # Use the exact key stored by paper_executor first.
+        # Recomputing can mismatch when snapshots have token_id but paper trades do not.
+        key = safe_str(row.get("signal_key")).strip()
+
+        if not key:
+            key = signal_key(row)
+
         if not key:
             continue
 
