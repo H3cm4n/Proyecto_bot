@@ -57,6 +57,7 @@ def main() -> None:
     max_open_trades = int(os.getenv("PAPER_MAX_OPEN_TRADES", "3"))
     max_exposure_usd = float(os.getenv("PAPER_MAX_EXPOSURE_USD", "30"))
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
+    close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
 
     if not snapshot_path.exists():
         raise SystemExit(f"No existe snapshot: {snapshot_path}")
@@ -68,6 +69,27 @@ def main() -> None:
 
     trades_path.parent.mkdir(parents=True, exist_ok=True)
     trades = load_trades(trades_path)
+
+    # CSV safety: empty text columns like closed_at can be read as float64.
+    # Force text-like columns to object so Pandas accepts ISO timestamps.
+    text_columns = [
+        "opened_at",
+        "last_seen_at",
+        "closed_at",
+        "status",
+        "signal_key",
+        "question",
+        "outcome",
+        "crypto_symbol",
+        "crypto_decision",
+        "crypto_decision_reasons",
+        "close_reason",
+    ]
+
+    for col in text_columns:
+        if col not in trades.columns:
+            trades[col] = ""
+        trades[col] = trades[col].fillna("").astype("object")
 
     existing_open_keys = set()
     if not trades.empty and "status" in trades.columns and "signal_key" in trades.columns:
@@ -183,7 +205,19 @@ def main() -> None:
                 trades.loc[idx, "pnl_usd"] = current_value - float(trade.get("trade_usd", trade_usd))
                 trades.loc[idx, "pnl_pct"] = ((bid - entry) / entry) * 100
 
-            if bid is not None and take_profit_price is not None and bid >= take_profit_price:
+            latest_alignment = str(latest.get("crypto_alignment") or "")
+            latest_decision = str(latest.get("crypto_decision") or "")
+
+            if (
+                close_on_binance_not_aligned
+                and latest_alignment != "ALIGNED"
+                and latest_decision != "CRYPTO_BUY_FAIR_EDGE"
+            ):
+                trades.loc[idx, "status"] = "CLOSED"
+                trades.loc[idx, "closed_at"] = now_iso()
+                trades.loc[idx, "close_reason"] = "RISK_EXIT_BINANCE_NOT_ALIGNED"
+
+            elif bid is not None and take_profit_price is not None and bid >= take_profit_price:
                 trades.loc[idx, "status"] = "CLOSED"
                 trades.loc[idx, "closed_at"] = now_iso()
                 trades.loc[idx, "close_reason"] = "TAKE_PROFIT"
@@ -205,6 +239,7 @@ def main() -> None:
     print(f"Exposición máxima permitida: ${max_exposure_usd:.2f}")
     print(f"Máximo posiciones abiertas: {max_open_trades}")
     print(f"Máximo nuevas entradas/ciclo: {max_new_trades_per_cycle}")
+    print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
     print(f"Archivo: {trades_path}")
 
     if not trades.empty:
