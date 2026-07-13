@@ -2300,6 +2300,156 @@ def run_crypto_snapshot(args: argparse.Namespace) -> None:
     console.print(f"Filas combinadas: {len(enriched_rows)}")
 
 
+
+def print_crypto_scan_cycle_table(rows: list[dict]) -> None:
+    table = Table(title="Crypto Scan Cycle")
+    table.add_column("#", justify="right")
+    table.add_column("Symbol")
+    table.add_column("Outcome")
+    table.add_column("Align")
+    table.add_column("Decision")
+    table.add_column("CScore", justify="right")
+    table.add_column("Ask", justify="right")
+    table.add_column("PMScore", justify="right")
+    table.add_column("B 5m%", justify="right")
+    table.add_column("B 15m%", justify="right")
+    table.add_column("Pregunta")
+
+    if not rows:
+        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "No hubo filas crypto.")
+
+    for idx, row in enumerate(rows, start=1):
+        table.add_row(
+            str(idx),
+            str(row.get("crypto_symbol", "")),
+            str(row.get("outcome", "")),
+            str(row.get("crypto_alignment", "")),
+            str(row.get("crypto_decision", "")),
+            str(row.get("crypto_signal_score", "")),
+            str(row.get("best_ask", "")),
+            str(row.get("score", "")),
+            str(row.get("binance_momentum_5m_pct", "")),
+            str(row.get("binance_momentum_15m_pct", "")),
+            str(row.get("question", ""))[:56],
+        )
+
+    console.print(table)
+
+
+def summarize_crypto_scan_rows(rows: list[dict]) -> dict:
+    summary = {
+        "rows": len(rows),
+        "aligned": 0,
+        "conflict": 0,
+        "neutral": 0,
+        "buy_candidates": 0,
+        "watch": 0,
+        "avoid": 0,
+    }
+
+    for row in rows:
+        alignment = str(row.get("crypto_alignment", ""))
+        decision = str(row.get("crypto_decision", ""))
+
+        if alignment == "ALIGNED":
+            summary["aligned"] += 1
+        elif alignment == "CONFLICT":
+            summary["conflict"] += 1
+        elif alignment == "NEUTRAL":
+            summary["neutral"] += 1
+
+        if decision == "CRYPTO_BUY_CANDIDATE":
+            summary["buy_candidates"] += 1
+        elif "WATCH" in decision:
+            summary["watch"] += 1
+        elif "AVOID" in decision:
+            summary["avoid"] += 1
+
+    return summary
+
+
+def run_crypto_scan(args: argparse.Namespace) -> None:
+    from pathlib import Path as LocalPath
+    from app.scanner import save_snapshot as save_orderbook_history_snapshot
+
+    console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
+    console.print("[bold green]Modo actual:[/bold green] CRYPTO SIGNAL SCAN")
+    console.print("[cyan]Recolecta historial Polymarket + Binance. Solo lectura. No usa wallet. No abre trades reales.[/cyan]\n")
+
+    symbols = parse_symbol_list(args.symbols)
+    output_path = LocalPath(args.output_path)
+
+    if args.reset and output_path.exists():
+        output_path.unlink()
+        console.print(f"[yellow]Historial crypto reiniciado:[/yellow] {output_path}")
+
+    for cycle in range(1, args.cycles + 1):
+        console.rule(f"[bold]Crypto scan cycle {cycle}/{args.cycles}[/bold]")
+
+        try:
+            polymarket_rows = collect_orderbook_snapshot(
+                event_limit=args.event_limit,
+                market_limit=args.market_limit,
+                request_delay=args.request_delay,
+                exclude_keywords=getattr(args, "exclude_keyword", []),
+                include_keywords=getattr(args, "include_keyword", []),
+                market_profile=getattr(args, "market_profile", "crypto-price"),
+            )
+
+            if polymarket_rows:
+                save_orderbook_history_snapshot(
+                    polymarket_rows,
+                    LocalPath(args.orderbook_history_path),
+                    append=True,
+                )
+
+            binance_rows = get_crypto_market_snapshot(
+                symbols=symbols,
+                interval=args.interval,
+                kline_limit=args.kline_limit,
+                timeout=args.timeout,
+            )
+
+            enriched_rows = attach_crypto_signals(polymarket_rows, binance_rows)
+
+            save_crypto_signal_snapshot(
+                enriched_rows,
+                output_path=args.output_path,
+                append=True,
+            )
+
+            summary = summarize_crypto_scan_rows(enriched_rows)
+
+            console.print(
+                "[bold green]OK[/bold green] "
+                f"PM rows={len(polymarket_rows)} | "
+                f"Binance rows={len(binance_rows)} | "
+                f"Combined={summary['rows']} | "
+                f"Aligned={summary['aligned']} | "
+                f"Conflict={summary['conflict']} | "
+                f"BuyCandidates={summary['buy_candidates']} | "
+                f"Watch={summary['watch']} | "
+                f"Avoid={summary['avoid']}"
+            )
+
+            if not args.quiet:
+                print_crypto_scan_cycle_table(enriched_rows)
+
+            console.print(f"Historial crypto actualizado: [bold]{args.output_path}[/bold]")
+            console.print(f"Historial orderbook actualizado: [bold]{args.orderbook_history_path}[/bold]")
+
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Crypto scan detenido por usuario.[/yellow]")
+            break
+
+        except Exception as exc:
+            console.print(f"[yellow]WARN:[/yellow] Falló el ciclo crypto-scan: {type(exc).__name__}: {exc}")
+
+        if cycle < args.cycles:
+            console.print(f"Esperando {args.scan_interval} segundos...\n")
+            time.sleep(args.scan_interval)
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-limit", type=int, default=20)
     parser.add_argument("--market-limit", type=int, default=10)
@@ -2580,6 +2730,21 @@ def build_parser() -> argparse.ArgumentParser:
     crypto_snapshot.add_argument("--output-path", default="data/crypto_signal_snapshot.csv")
     crypto_snapshot.add_argument("--append", action="store_true")
     crypto_snapshot.set_defaults(func=run_crypto_snapshot, market_profile="crypto-price")
+
+
+    crypto_scan = subparsers.add_parser("crypto-scan", help="Recolecta historial combinado Polymarket crypto-price + Binance.")
+    add_common_args(crypto_scan)
+    crypto_scan.add_argument("--cycles", type=int, default=60)
+    crypto_scan.add_argument("--scan-interval", type=float, default=60.0)
+    crypto_scan.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT")
+    crypto_scan.add_argument("--interval", default="1m")
+    crypto_scan.add_argument("--kline-limit", type=int, default=60)
+    crypto_scan.add_argument("--timeout", type=float, default=10.0)
+    crypto_scan.add_argument("--output-path", default="data/crypto_signal_history.csv")
+    crypto_scan.add_argument("--orderbook-history-path", default="data/orderbook_history.csv")
+    crypto_scan.add_argument("--reset", action="store_true")
+    crypto_scan.add_argument("--quiet", action="store_true")
+    crypto_scan.set_defaults(func=run_crypto_scan, market_profile="crypto-price")
 
 
     return parser
