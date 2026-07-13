@@ -2263,6 +2263,8 @@ def print_crypto_signal_table(rows: list[dict]) -> None:
 
 
 def run_crypto_snapshot(args: argparse.Namespace) -> None:
+    from app.brain.edge_model import attach_edge_scores
+
     console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
     console.print("[bold green]Modo actual:[/bold green] CRYPTO SIGNAL SNAPSHOT")
     console.print("[cyan]Cruza Polymarket crypto-price con Binance public feed. Solo lectura. No abre trades reales.[/cyan]\n")
@@ -2277,6 +2279,8 @@ def run_crypto_snapshot(args: argparse.Namespace) -> None:
         include_keywords=getattr(args, "include_keyword", []),
         market_profile=getattr(args, "market_profile", "crypto-price"),
     )
+
+    polymarket_rows = attach_edge_scores(polymarket_rows)
 
     binance_rows = get_crypto_market_snapshot(
         symbols=symbols,
@@ -2370,6 +2374,7 @@ def summarize_crypto_scan_rows(rows: list[dict]) -> dict:
 
 def run_crypto_scan(args: argparse.Namespace) -> None:
     from pathlib import Path as LocalPath
+    from app.brain.edge_model import attach_edge_scores
     from app.scanner import save_snapshot as save_orderbook_history_snapshot
 
     console.print(f"[bold cyan]Proyecto:[/bold cyan] {settings.app_name}")
@@ -2395,6 +2400,8 @@ def run_crypto_scan(args: argparse.Namespace) -> None:
                 include_keywords=getattr(args, "include_keyword", []),
                 market_profile=getattr(args, "market_profile", "crypto-price"),
             )
+
+            polymarket_rows = attach_edge_scores(polymarket_rows)
 
             if polymarket_rows:
                 save_orderbook_history_snapshot(
