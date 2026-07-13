@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.signals.crypto_fair_value import attach_fair_value_signal
+
 import pandas as pd
 
 
@@ -232,6 +234,39 @@ def attach_crypto_signals(
         enriched["crypto_signal_score"] = crypto_score
         enriched["crypto_decision"] = crypto_decision
         enriched["crypto_decision_reasons"] = crypto_reasons
+
+        # Binance-first fair value model:
+
+        # Binance estimates fair probability; Polymarket ask is only the venue price.
+
+        enriched = attach_fair_value_signal(enriched)
+
+
+        fair_decision = str(enriched.get("fair_decision") or "")
+
+        if fair_decision and fair_decision not in {"CRYPTO_IGNORE_NOT_ABOVE_DATE"}:
+
+            enriched["crypto_decision"] = fair_decision
+
+            enriched["crypto_signal_score"] = enriched.get(
+
+                "fair_signal_score",
+
+                enriched.get("crypto_signal_score"),
+
+            )
+
+
+            old_reasons = str(enriched.get("crypto_decision_reasons") or "")
+
+            fair_reasons = str(enriched.get("fair_decision_reasons") or "")
+
+            enriched["crypto_decision_reasons"] = ",".join(
+
+                part for part in [old_reasons, fair_reasons] if part
+
+            )
+
 
         enriched_rows.append(enriched)
 
