@@ -56,6 +56,7 @@ while true; do
   code="$?"
 
   python tools/paper_executor.py "$OUT"
+  python tools/signal_journal.py "$OUT"
   python tools/paper_report.py data/paper_trades.csv
 
   if [ "$code" = "2" ]; then
