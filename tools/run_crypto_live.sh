@@ -55,6 +55,8 @@ while true; do
   python tools/check_buy_signal.py "$OUT"
   code="$?"
 
+  python tools/paper_executor.py "$OUT"
+
   if [ "$code" = "2" ]; then
     echo
     echo "🚨 ALERTA BUY DETECTADA 🚨"
