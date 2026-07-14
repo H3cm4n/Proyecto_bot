@@ -65,6 +65,11 @@ def main() -> None:
     confirmation_min_observations = int(os.getenv("PAPER_CONFIRMATION_MIN_OBSERVATIONS", "2"))
     confirmation_lookback_minutes = int(os.getenv("PAPER_CONFIRMATION_LOOKBACK_MINUTES", "10"))
 
+    max_entry_ask = float(os.getenv("PAPER_MAX_ENTRY_ASK", "0.60"))
+    max_entry_spread = float(os.getenv("PAPER_MAX_ENTRY_SPREAD", "0.02"))
+    min_entry_fair_edge = float(os.getenv("PAPER_MIN_ENTRY_FAIR_EDGE", "0.25"))
+    min_entry_score = float(os.getenv("PAPER_MIN_ENTRY_SCORE", "80"))
+
     if not snapshot_path.exists():
         raise SystemExit(f"No existe snapshot: {snapshot_path}")
 
@@ -143,6 +148,7 @@ def main() -> None:
         cooldown_blocked_keys = set(recent_closed["signal_key"].astype(str))
 
     new_trades = []
+    entry_filter_blocked_count = 0
 
     open_trades_count = 0
     open_exposure_usd = 0.0
@@ -211,8 +217,27 @@ def main() -> None:
 
         ask = safe_float(row.get("best_ask"))
         bid = safe_float(row.get("best_bid"))
+        spread = safe_float(row.get("spread"))
+        fair_edge = safe_float(row.get("fair_edge_to_ask"))
+        orderbook_score = safe_float(row.get("score"))
 
         if ask is None or ask <= 0:
+            continue
+
+        if ask > max_entry_ask:
+            entry_filter_blocked_count += 1
+            continue
+
+        if spread is not None and spread > max_entry_spread:
+            entry_filter_blocked_count += 1
+            continue
+
+        if fair_edge is None or fair_edge < min_entry_fair_edge:
+            entry_filter_blocked_count += 1
+            continue
+
+        if orderbook_score is None or orderbook_score < min_entry_score:
+            entry_filter_blocked_count += 1
             continue
 
         shares = trade_usd / ask
@@ -340,6 +365,11 @@ def main() -> None:
     print(f"Confirmación requerida: {require_signal_confirmation}")
     print(f"Confirmación mínima: {confirmation_min_observations} observaciones / {confirmation_lookback_minutes} min")
     print(f"Señales bloqueadas por falta de confirmación: {confirmation_blocked_count}")
+    print(f"Filtro entrada ask máximo: {max_entry_ask}")
+    print(f"Filtro entrada spread máximo: {max_entry_spread}")
+    print(f"Filtro entrada edge mínimo: {min_entry_fair_edge}")
+    print(f"Filtro entrada score mínimo: {min_entry_score}")
+    print(f"Señales bloqueadas por filtros de entrada: {entry_filter_blocked_count}")
     print(f"Archivo: {trades_path}")
 
     if not trades.empty:
