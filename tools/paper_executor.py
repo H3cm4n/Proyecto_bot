@@ -46,6 +46,100 @@ def load_trades(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def load_binance_flow(path: str = "data/binance_flow_snapshot.csv") -> dict[str, dict]:
+    flow_path = Path(path)
+
+    if not flow_path.exists():
+        return {}
+
+    try:
+        df = pd.read_csv(flow_path)
+    except Exception:
+        return {}
+
+    if df.empty or "symbol" not in df.columns:
+        return {}
+
+    rows: dict[str, dict] = {}
+
+    for _, row in df.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+
+        if not symbol:
+            continue
+
+        rows[symbol] = row.to_dict()
+
+    return rows
+
+
+def infer_trade_direction(question: str, outcome: str) -> str:
+    q = str(question or "").lower()
+    o = str(outcome or "").lower().strip()
+
+    bullish_question = any(
+        token in q
+        for token in [
+            "above",
+            "reach",
+            "reaches",
+            "hit",
+            "hits",
+            "higher",
+            "up",
+        ]
+    )
+
+    bearish_question = any(
+        token in q
+        for token in [
+            "below",
+            "under",
+            "dip",
+            "dips",
+            "lower",
+            "down",
+        ]
+    )
+
+    yes = o in {"yes", "y", "up", "higher"}
+    no = o in {"no", "n", "down", "lower"}
+
+    if bullish_question and yes:
+        return "BULLISH"
+
+    if bullish_question and no:
+        return "BEARISH"
+
+    if bearish_question and yes:
+        return "BEARISH"
+
+    if bearish_question and no:
+        return "BULLISH"
+
+    if o in {"up", "higher"}:
+        return "BULLISH"
+
+    if o in {"down", "lower"}:
+        return "BEARISH"
+
+    return "UNKNOWN"
+
+
+def flow_confirms_adverse_exit(flow_bias: str, trade_direction: str) -> bool:
+    flow_bias = str(flow_bias or "").upper()
+    trade_direction = str(trade_direction or "").upper()
+
+    if trade_direction == "BULLISH":
+        return flow_bias == "BEARISH"
+
+    if trade_direction == "BEARISH":
+        return flow_bias == "BULLISH"
+
+    # Si no sabemos la dirección, no bloqueamos el risk exit viejo.
+    return True
+
+
 def main() -> None:
     snapshot_path = Path(sys.argv[1] if len(sys.argv) > 1 else SNAPSHOT_PATH)
     trades_path = Path(os.getenv("PAPER_TRADES_PATH", TRADES_PATH))
@@ -60,6 +154,7 @@ def main() -> None:
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
     close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
     exit_confirmation_cycles = int(os.getenv("PAPER_EXIT_CONFIRMATION_CYCLES", "2"))
+    require_flow_exit_confirmation = os.getenv("PAPER_EXIT_REQUIRE_FLOW_CONFIRMATION", "1") == "1"
     reentry_cooldown_minutes = int(os.getenv("PAPER_REENTRY_COOLDOWN_MINUTES", "30"))
     require_signal_confirmation = os.getenv("PAPER_REQUIRE_SIGNAL_CONFIRMATION", "1") == "1"
     confirmation_min_observations = int(os.getenv("PAPER_CONFIRMATION_MIN_OBSERVATIONS", "2"))
@@ -117,6 +212,11 @@ def main() -> None:
         trades["not_aligned_count"],
         errors="coerce",
     ).fillna(0).astype(int)
+
+    for col in ["latest_flow_bias", "exit_flow_confirmed", "trade_direction"]:
+        if col not in trades.columns:
+            trades[col] = ""
+        trades[col] = trades[col].fillna("").astype("object")
 
     existing_open_keys = set()
     if not trades.empty and "status" in trades.columns and "signal_key" in trades.columns:
@@ -273,6 +373,12 @@ def main() -> None:
                 "crypto_decision_reasons": row.get("crypto_decision_reasons"),
                 "close_reason": "",
                 "not_aligned_count": 0,
+                "latest_flow_bias": "",
+                "exit_flow_confirmed": "",
+                "trade_direction": infer_trade_direction(
+                    row.get("question"),
+                    row.get("outcome"),
+                ),
             }
         )
 
@@ -280,6 +386,9 @@ def main() -> None:
         trades = pd.DataFrame(new_trades)
     elif new_trades:
         trades = pd.concat([trades, pd.DataFrame(new_trades)], ignore_index=True)
+
+    flow_by_symbol = load_binance_flow()
+    flow_exit_blocked_count = 0
 
     if not trades.empty:
         latest_by_key = {signal_key(row): row for _, row in snapshot.iterrows()}
@@ -315,13 +424,48 @@ def main() -> None:
             latest_alignment = str(latest.get("crypto_alignment") or "")
             latest_decision = str(latest.get("crypto_decision") or "")
 
+            symbol = str(trade.get("crypto_symbol") or "").strip().upper()
+            flow_row = flow_by_symbol.get(symbol, {})
+            latest_flow_bias = str(flow_row.get("flow_bias") or "").upper()
+
+            trade_direction = str(trade.get("trade_direction") or "").upper()
+            if not trade_direction or trade_direction == "NAN":
+                trade_direction = infer_trade_direction(
+                    trade.get("question"),
+                    trade.get("outcome"),
+                )
+
+            flow_confirms_exit = flow_confirms_adverse_exit(
+                latest_flow_bias,
+                trade_direction,
+            )
+
+            trades.loc[idx, "latest_flow_bias"] = latest_flow_bias
+            trades.loc[idx, "trade_direction"] = trade_direction
+            trades.loc[idx, "exit_flow_confirmed"] = str(flow_confirms_exit)
+
             not_aligned_now = (
                 close_on_binance_not_aligned
                 and latest_alignment != "ALIGNED"
                 and latest_decision != "CRYPTO_BUY_FAIR_EDGE"
             )
 
-            if not_aligned_now:
+            if (
+                not_aligned_now
+                and require_flow_exit_confirmation
+                and not flow_confirms_exit
+            ):
+                flow_exit_blocked_count += 1
+
+            exit_risk_now = (
+                not_aligned_now
+                and (
+                    not require_flow_exit_confirmation
+                    or flow_confirms_exit
+                )
+            )
+
+            if exit_risk_now:
                 current_not_aligned_count = int(trades.loc[idx, "not_aligned_count"] or 0) + 1
                 trades.loc[idx, "not_aligned_count"] = current_not_aligned_count
             else:
@@ -360,6 +504,8 @@ def main() -> None:
     print(f"Máximo nuevas entradas/ciclo: {max_new_trades_per_cycle}")
     print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
     print(f"Confirmación de salida: {exit_confirmation_cycles} ciclos")
+    print(f"Requerir Flow adverso para salida: {require_flow_exit_confirmation}")
+    print(f"Salidas bloqueadas por Flow no adverso: {flow_exit_blocked_count}")
     print(f"Cooldown reentrada: {reentry_cooldown_minutes} min")
     print(f"Señales bloqueadas por cooldown: {len(cooldown_blocked_keys)}")
     print(f"Confirmación requerida: {require_signal_confirmation}")
