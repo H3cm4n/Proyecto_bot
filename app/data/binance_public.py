@@ -290,10 +290,24 @@ def save_crypto_market_snapshot(
 def get_orderbook_depth(symbol: str, limit: int = 100) -> dict:
     """Obtiene orderbook público de Binance. Solo lectura, sin API key."""
     symbol = normalize_symbol(symbol)
-    return request_binance_json(
+    result = request_binance_json(
         "/api/v3/depth",
         params={
             "symbol": symbol,
             "limit": limit,
         },
     )
+
+    # request_binance_json puede regresar tuplas en este proyecto.
+    # Nos quedamos con el primer dict que aparezca.
+    if isinstance(result, tuple):
+        for item in result:
+            if isinstance(item, dict):
+                return item
+
+        return {}
+
+    if isinstance(result, dict):
+        return result
+
+    return {}
