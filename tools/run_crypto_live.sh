@@ -4,10 +4,15 @@ set -u
 INTERVAL="${INTERVAL:-60}"
 OUT="data/crypto_signal_snapshot_fair_value.csv"
 LOG="data/crypto_live_last.log"
+UPDOWN_PROBE_LOG="data/updown_clob_probe_last.log"
+UPDOWN_PROBE_ENABLED="${UPDOWN_PROBE_ENABLED:-1}"
+UPDOWN_PROBE_EVERY_CYCLES="${UPDOWN_PROBE_EVERY_CYCLES:-5}"
+CYCLE=0
 
 mkdir -p data
 
 while true; do
+  CYCLE=$((CYCLE + 1))
   clear
   echo "=============================================="
   echo "CRYPTO LIVE MONITOR - Binance-first"
@@ -51,6 +56,21 @@ while true; do
   fi
 
   python tools/crypto_report.py "$OUT"
+
+  echo
+  echo "=== UP/DOWN CLOB PROBE ==="
+  if [ "$UPDOWN_PROBE_ENABLED" = "1" ] && [ $((CYCLE % UPDOWN_PROBE_EVERY_CYCLES)) -eq 0 ]; then
+    echo "Ejecutando probe Up/Down CLOB ciclo $CYCLE..."
+    python tools/probe_updown_clob.py > "$UPDOWN_PROBE_LOG" 2>&1
+    tail -n 25 "$UPDOWN_PROBE_LOG"
+  else
+    echo "Saltando probe Up/Down CLOB en este ciclo."
+    echo "Frecuencia: cada $UPDOWN_PROBE_EVERY_CYCLES ciclos."
+    echo "Último log: $UPDOWN_PROBE_LOG"
+  fi
+
+  echo
+  python tools/market_router.py
 
   python tools/check_buy_signal.py "$OUT"
   code="$?"
