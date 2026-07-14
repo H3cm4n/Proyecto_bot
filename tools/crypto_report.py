@@ -18,26 +18,54 @@ def main() -> None:
     df = pd.read_csv(path)
 
     print("\n=== BINANCE MARKET STATE ===")
+    binance_snapshot_path = Path("data/binance_crypto_snapshot.csv")
 
-    binance_cols = [
-        "crypto_symbol",
-        "binance_spot_price",
-        "binance_bias",
-        "binance_momentum_5m_pct",
-        "binance_momentum_15m_pct",
-        "binance_momentum_full_window_pct",
-    ]
-    binance_cols = [c for c in binance_cols if c in df.columns]
+    if binance_snapshot_path.exists():
+        try:
+            binance_df = pd.read_csv(binance_snapshot_path)
+        except pd.errors.EmptyDataError:
+            binance_df = pd.DataFrame()
 
-    if binance_cols:
-        market = (
-            df[binance_cols]
-            .drop_duplicates(subset=["crypto_symbol"])
-            .sort_values("crypto_symbol")
-        )
-        print(market.to_string(index=False))
+        binance_cols = [
+            "symbol",
+            "status",
+            "price",
+            "price_change_percent_24h",
+            "momentum_5m_pct",
+            "momentum_15m_pct",
+            "momentum_full_window_pct",
+            "range_full_window_pct",
+        ]
+
+        existing_binance_cols = [col for col in binance_cols if col in binance_df.columns]
+
+        if existing_binance_cols and not binance_df.empty:
+            state = (
+                binance_df[existing_binance_cols]
+                .drop_duplicates(subset=["symbol"])
+                .sort_values("symbol")
+            )
+            print(state.to_string(index=False))
+        else:
+            print("No hay filas Binance en data/binance_crypto_snapshot.csv.")
     else:
-        print("No encontré columnas Binance en el CSV.")
+        binance_cols = [
+            "crypto_symbol",
+            "binance_spot_price",
+            "binance_bias",
+            "binance_momentum_5m_pct",
+            "binance_momentum_15m_pct",
+        ]
+
+        existing_binance_cols = [col for col in binance_cols if col in df.columns]
+
+        if existing_binance_cols:
+            state = (
+                df[existing_binance_cols]
+                .drop_duplicates(subset=["crypto_symbol"])
+                .sort_values("crypto_symbol")
+            )
+            print(state.to_string(index=False))
 
     print("\n=== DECISIONES ===")
     if "crypto_decision" in df.columns:
