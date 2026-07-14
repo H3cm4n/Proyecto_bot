@@ -228,6 +228,13 @@ def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
             "fair_decision_reasons": "ASK_TOO_HIGH",
         }
 
+    if ask > 0.60:
+        return {
+            "fair_decision": "CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH",
+            "fair_signal_score": fair_signal_score,
+            "fair_decision_reasons": "ENTRY_ASK_TOO_HIGH_FOR_PAPER",
+        }
+
     if spread is not None and spread > 0.02:
         return {
             "fair_decision": "CRYPTO_WAIT_SPREAD_TOO_WIDE",
