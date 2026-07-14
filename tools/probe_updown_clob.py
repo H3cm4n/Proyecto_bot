@@ -161,7 +161,7 @@ def main() -> None:
     rows = []
     found_markets = 0
 
-    for offset in range(0, 2200, 100):
+    for offset in range(0, 2100, 100):
         print(f"Descargando offset={offset}...")
 
         try:
