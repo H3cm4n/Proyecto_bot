@@ -93,6 +93,7 @@ PYROUTE
 
   echo
   echo "Market route para executor: $MARKET_ROUTE"
+  python tools/market_router_journal.py
 
   if [ "$MARKET_ROUTE" = "ABOVE_DATE" ]; then
     python tools/check_buy_signal.py "$OUT"
