@@ -286,3 +286,14 @@ def save_crypto_market_snapshot(
     df.to_csv(path, index=False)
 
     return path
+
+def get_orderbook_depth(symbol: str, limit: int = 100) -> dict:
+    """Obtiene orderbook público de Binance. Solo lectura, sin API key."""
+    symbol = normalize_symbol(symbol)
+    return request_binance_json(
+        "/api/v3/depth",
+        params={
+            "symbol": symbol,
+            "limit": limit,
+        },
+    )
