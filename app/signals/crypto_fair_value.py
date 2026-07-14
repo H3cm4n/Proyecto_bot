@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import math
 import re
 from typing import Any
@@ -148,6 +150,16 @@ def estimate_above_date_fair_value(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def env_float(name: str, default: float) -> float:
+    try:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return default
+        return float(raw)
+    except Exception:
+        return default
+
+
 def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
     market_kind = str(row.get("market_kind") or "")
     status = str(row.get("fair_value_status") or "")
@@ -221,28 +233,38 @@ def classify_fair_decision(row: dict[str, Any]) -> dict[str, Any]:
             "fair_decision_reasons": "ASK_TOO_LOW",
         }
 
-    if ask > 0.70:
+    avoid_ask_max = env_float("CRYPTO_FAIR_AVOID_ASK_MAX", 0.70)
+
+    entry_ask_max = env_float("CRYPTO_FAIR_ENTRY_ASK_MAX", 0.60)
+
+    entry_spread_max = env_float("CRYPTO_FAIR_ENTRY_SPREAD_MAX", 0.02)
+
+    min_orderbook_score = env_float("CRYPTO_FAIR_MIN_ORDERBOOK_SCORE", 70.0)
+
+    
+
+    if ask > avoid_ask_max:
         return {
             "fair_decision": "CRYPTO_AVOID_ASK_TOO_HIGH",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "ASK_TOO_HIGH",
         }
 
-    if ask > 0.60:
+    if ask > entry_ask_max:
         return {
             "fair_decision": "CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "ENTRY_ASK_TOO_HIGH_FOR_PAPER",
         }
 
-    if spread is not None and spread > 0.02:
+    if spread is not None and spread > entry_spread_max:
         return {
             "fair_decision": "CRYPTO_WAIT_SPREAD_TOO_WIDE",
             "fair_signal_score": fair_signal_score,
             "fair_decision_reasons": "SPREAD_TOO_WIDE",
         }
 
-    if score < 70:
+    if score < min_orderbook_score:
         return {
             "fair_decision": "CRYPTO_WAIT_LOW_ORDERBOOK_SCORE",
             "fair_signal_score": fair_signal_score,
