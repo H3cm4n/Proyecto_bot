@@ -59,6 +59,7 @@ def main() -> None:
     max_exposure_usd = float(os.getenv("PAPER_MAX_EXPOSURE_USD", "30"))
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
     close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
+    exit_confirmation_cycles = int(os.getenv("PAPER_EXIT_CONFIRMATION_CYCLES", "2"))
     reentry_cooldown_minutes = int(os.getenv("PAPER_REENTRY_COOLDOWN_MINUTES", "30"))
     require_signal_confirmation = os.getenv("PAPER_REQUIRE_SIGNAL_CONFIRMATION", "1") == "1"
     confirmation_min_observations = int(os.getenv("PAPER_CONFIRMATION_MIN_OBSERVATIONS", "2"))
@@ -103,6 +104,14 @@ def main() -> None:
         if col not in trades.columns:
             trades[col] = ""
         trades[col] = trades[col].fillna("").astype("object")
+
+    if "not_aligned_count" not in trades.columns:
+        trades["not_aligned_count"] = 0
+
+    trades["not_aligned_count"] = pd.to_numeric(
+        trades["not_aligned_count"],
+        errors="coerce",
+    ).fillna(0).astype(int)
 
     existing_open_keys = set()
     if not trades.empty and "status" in trades.columns and "signal_key" in trades.columns:
@@ -238,6 +247,7 @@ def main() -> None:
                 "crypto_decision": row.get("crypto_decision"),
                 "crypto_decision_reasons": row.get("crypto_decision_reasons"),
                 "close_reason": "",
+                "not_aligned_count": 0,
             }
         )
 
@@ -280,10 +290,22 @@ def main() -> None:
             latest_alignment = str(latest.get("crypto_alignment") or "")
             latest_decision = str(latest.get("crypto_decision") or "")
 
-            if (
+            not_aligned_now = (
                 close_on_binance_not_aligned
                 and latest_alignment != "ALIGNED"
                 and latest_decision != "CRYPTO_BUY_FAIR_EDGE"
+            )
+
+            if not_aligned_now:
+                current_not_aligned_count = int(trades.loc[idx, "not_aligned_count"] or 0) + 1
+                trades.loc[idx, "not_aligned_count"] = current_not_aligned_count
+            else:
+                current_not_aligned_count = 0
+                trades.loc[idx, "not_aligned_count"] = 0
+
+            if (
+                close_on_binance_not_aligned
+                and current_not_aligned_count >= exit_confirmation_cycles
             ):
                 trades.loc[idx, "status"] = "CLOSED"
                 trades.loc[idx, "closed_at"] = now_iso()
@@ -312,6 +334,7 @@ def main() -> None:
     print(f"Máximo posiciones abiertas: {max_open_trades}")
     print(f"Máximo nuevas entradas/ciclo: {max_new_trades_per_cycle}")
     print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
+    print(f"Confirmación de salida: {exit_confirmation_cycles} ciclos")
     print(f"Cooldown reentrada: {reentry_cooldown_minutes} min")
     print(f"Señales bloqueadas por cooldown: {len(cooldown_blocked_keys)}")
     print(f"Confirmación requerida: {require_signal_confirmation}")
