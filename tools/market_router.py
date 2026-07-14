@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import pandas as pd
 
 
@@ -134,6 +135,24 @@ def summarize_above_date(df: pd.DataFrame) -> dict:
     }
 
 
+def write_route_decision(route: str, reason: str, updown: dict, above: dict, best: dict | None = None) -> None:
+    out = Path("data/market_router_last.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "route": route,
+        "reason": reason,
+        "updown_rows": updown.get("rows", 0),
+        "updown_tradeable": updown.get("tradeable", 0),
+        "above_rows": above.get("rows", 0),
+        "above_tradeable": above.get("tradeable", 0),
+        "best": best or {},
+    }
+
+    with out.open("w") as file:
+        json.dump(payload, file, indent=2, default=str)
+
+
 def main() -> None:
     updown = summarize_updown(load_csv("data/updown_clob_probe.csv"))
     above = summarize_above_date(load_csv("data/crypto_signal_snapshot_fair_value.csv"))
@@ -148,29 +167,41 @@ def main() -> None:
 
     if updown["tradeable"] > 0:
         best = updown["best"]
+        reason = "hay orderbook CLOB tradeable."
+        write_route_decision("UPDOWN_5M", reason, updown, above, best)
+
         print("Ruta elegida: UPDOWN_5M")
-        print("Motivo: hay orderbook CLOB tradeable.")
+        print("Motivo:", reason)
         print("symbol:", best.get("symbol"))
         print("outcome:", best.get("outcome"))
         print("bid/ask:", best.get("clob_best_bid"), "/", best.get("clob_best_ask"))
         print("spread:", best.get("clob_spread"))
         print("question:", best.get("question"))
+        print("Archivo decisión: data/market_router_last.json")
         return
 
     if above["tradeable"] > 0:
         best = above["best"]
+        reason = "Up/Down no tiene CLOB; above-date sí tiene oportunidad BUY/WATCH."
+        write_route_decision("ABOVE_DATE", reason, updown, above, best)
+
         print("Ruta elegida: ABOVE_DATE")
-        print("Motivo: Up/Down no tiene CLOB; above-date sí tiene oportunidad BUY/WATCH.")
+        print("Motivo:", reason)
         print("symbol:", best.get("crypto_symbol"))
         print("outcome:", best.get("outcome"))
         print("decision:", best.get("crypto_decision"))
         print("bid/ask:", best.get("best_bid"), "/", best.get("best_ask"))
         print("edge:", best.get("fair_edge_to_ask"))
         print("question:", best.get("question"))
+        print("Archivo decisión: data/market_router_last.json")
         return
 
+    reason = "no hay Up/Down CLOB tradeable ni above-date BUY/WATCH."
+    write_route_decision("NONE", reason, updown, above)
+
     print("Ruta elegida: NONE")
-    print("Motivo: no hay Up/Down CLOB tradeable ni above-date BUY/WATCH.")
+    print("Motivo:", reason)
+    print("Archivo decisión: data/market_router_last.json")
 
 
 if __name__ == "__main__":
