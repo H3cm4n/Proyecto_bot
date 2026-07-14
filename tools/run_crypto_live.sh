@@ -57,6 +57,8 @@ while true; do
 
   python tools/crypto_report.py "$OUT"
 
+  python tools/binance_flow_report.py
+
   echo
   echo "=== UP/DOWN CLOB PROBE ==="
   if [ "$UPDOWN_PROBE_ENABLED" = "1" ] && [ $((CYCLE % UPDOWN_PROBE_EVERY_CYCLES)) -eq 0 ]; then
