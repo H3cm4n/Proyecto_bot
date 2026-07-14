@@ -72,10 +72,40 @@ while true; do
   echo
   python tools/market_router.py
 
-  python tools/check_buy_signal.py "$OUT"
-  code="$?"
+  MARKET_ROUTE="$(python - << 'PYROUTE'
+import json
+from pathlib import Path
 
-  python tools/paper_executor.py "$OUT"
+path = Path("data/market_router_last.json")
+if not path.exists():
+    print("NONE")
+    raise SystemExit(0)
+
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    print("NONE")
+    raise SystemExit(0)
+
+print(data.get("route") or "NONE")
+PYROUTE
+)"
+
+  echo
+  echo "Market route para executor: $MARKET_ROUTE"
+
+  if [ "$MARKET_ROUTE" = "ABOVE_DATE" ]; then
+    python tools/check_buy_signal.py "$OUT"
+    code="$?"
+
+    python tools/paper_executor.py "$OUT"
+  else
+    echo "Router no eligió ABOVE_DATE; bloqueando nuevas entradas paper."
+    echo "Las posiciones abiertas todavía se actualizan/cerrarían si existieran."
+
+    code="0"
+    PAPER_MAX_NEW_TRADES_PER_CYCLE=0 python tools/paper_executor.py "$OUT"
+  fi
   python tools/signal_journal.py "$OUT"
   python tools/cycle_journal.py "$OUT"
   python tools/paper_report.py data/paper_trades.csv
