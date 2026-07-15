@@ -59,6 +59,8 @@ while true; do
 
   python tools/binance_flow_report.py
   python tools/candidate_journal.py "$OUT"
+  python tools/research_lane_report.py "$OUT"
+  python tools/research_paper_executor.py "$OUT"
 
   echo
   echo "=== UP/DOWN CLOB PROBE ==="
