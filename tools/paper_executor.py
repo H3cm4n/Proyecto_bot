@@ -154,6 +154,17 @@ def main() -> None:
     max_new_trades_per_cycle = int(os.getenv("PAPER_MAX_NEW_TRADES_PER_CYCLE", "1"))
     close_on_binance_not_aligned = os.getenv("PAPER_CLOSE_ON_BINANCE_NOT_ALIGNED", "1") == "1"
     exit_confirmation_cycles = int(os.getenv("PAPER_EXIT_CONFIRMATION_CYCLES", "2"))
+
+    # Política de salida separada:
+    # CONFLICT = Binance claramente en contra del trade.
+    # NEUTRAL = pérdida de convicción, pero no necesariamente peligro fuerte.
+    exit_neutral_cycles = int(os.getenv("PAPER_EXIT_NEUTRAL_CYCLES", str(exit_confirmation_cycles)))
+    exit_conflict_cycles = int(os.getenv("PAPER_EXIT_CONFLICT_CYCLES", "1"))
+    exit_neutral_min_hold = float(os.getenv("PAPER_EXIT_NEUTRAL_MIN_HOLD", "10"))
+    exit_conflict_min_hold = float(os.getenv("PAPER_EXIT_CONFLICT_MIN_HOLD", "5"))
+    exit_neutral_pnl_below = float(os.getenv("PAPER_EXIT_NEUTRAL_PNL_BELOW", "-5"))
+    exit_conflict_pnl_below = float(os.getenv("PAPER_EXIT_CONFLICT_PNL_BELOW", "-2"))
+
     require_flow_exit_confirmation = os.getenv("PAPER_EXIT_REQUIRE_FLOW_CONFIRMATION", "1") == "1"
     reentry_cooldown_minutes = int(os.getenv("PAPER_REENTRY_COOLDOWN_MINUTES", "30"))
     require_signal_confirmation = os.getenv("PAPER_REQUIRE_SIGNAL_CONFIRMATION", "1") == "1"
@@ -212,6 +223,15 @@ def main() -> None:
         trades["not_aligned_count"],
         errors="coerce",
     ).fillna(0).astype(int)
+
+    for risk_count_col in ["neutral_exit_count", "conflict_exit_count"]:
+        if risk_count_col not in trades.columns:
+            trades[risk_count_col] = 0
+
+        trades[risk_count_col] = pd.to_numeric(
+            trades[risk_count_col],
+            errors="coerce",
+        ).fillna(0).astype(int)
 
     for col in ["latest_flow_bias", "exit_flow_confirmed", "trade_direction"]:
         if col not in trades.columns:
@@ -373,6 +393,8 @@ def main() -> None:
                 "crypto_decision_reasons": row.get("crypto_decision_reasons"),
                 "close_reason": "",
                 "not_aligned_count": 0,
+                "neutral_exit_count": 0,
+                "conflict_exit_count": 0,
                 "latest_flow_bias": "",
                 "exit_flow_confirmed": "",
                 "trade_direction": infer_trade_direction(
@@ -465,20 +487,64 @@ def main() -> None:
                 )
             )
 
-            if exit_risk_now:
-                current_not_aligned_count = int(trades.loc[idx, "not_aligned_count"] or 0) + 1
-                trades.loc[idx, "not_aligned_count"] = current_not_aligned_count
-            else:
-                current_not_aligned_count = 0
-                trades.loc[idx, "not_aligned_count"] = 0
+            latest_alignment_upper = str(latest_alignment or "").strip().upper()
 
-            if (
-                close_on_binance_not_aligned
-                and current_not_aligned_count >= exit_confirmation_cycles
-            ):
+            try:
+                current_pnl_pct = float(trades.loc[idx, "pnl_pct"] or 0.0)
+            except Exception:
+                current_pnl_pct = 0.0
+
+            try:
+                opened_at_dt = pd.to_datetime(trade.get("opened_at"), errors="coerce", utc=True)
+                age_minutes = (pd.Timestamp.now(tz="UTC") - opened_at_dt).total_seconds() / 60
+            except Exception:
+                age_minutes = 0.0
+
+            is_conflict_risk = latest_alignment_upper == "CONFLICT"
+            is_neutral_risk = latest_alignment_upper == "NEUTRAL" or latest_decision == "CRYPTO_WAIT_BINANCE_NOT_ALIGNED"
+
+            # Para NEUTRAL respetamos la confirmación de Flow si está activa.
+            # Para CONFLICT, Binance ya está claramente contra el trade; no lo bloqueamos por Flow.
+            risk_event_now = is_conflict_risk or (is_neutral_risk and exit_risk_now)
+
+            if risk_event_now and is_conflict_risk:
+                current_conflict_count = int(trades.loc[idx, "conflict_exit_count"] or 0) + 1
+                current_neutral_count = 0
+
+            elif risk_event_now and is_neutral_risk:
+                current_neutral_count = int(trades.loc[idx, "neutral_exit_count"] or 0) + 1
+                current_conflict_count = 0
+
+            else:
+                current_neutral_count = 0
+                current_conflict_count = 0
+
+            trades.loc[idx, "neutral_exit_count"] = current_neutral_count
+            trades.loc[idx, "conflict_exit_count"] = current_conflict_count
+            trades.loc[idx, "not_aligned_count"] = max(current_neutral_count, current_conflict_count)
+
+            conflict_should_close = (
+                is_conflict_risk
+                and current_conflict_count >= exit_conflict_cycles
+                and age_minutes >= exit_conflict_min_hold
+                and current_pnl_pct <= exit_conflict_pnl_below
+            )
+
+            neutral_should_close = (
+                is_neutral_risk
+                and current_neutral_count >= exit_neutral_cycles
+                and age_minutes >= exit_neutral_min_hold
+                and current_pnl_pct <= exit_neutral_pnl_below
+            )
+
+            if close_on_binance_not_aligned and (conflict_should_close or neutral_should_close):
                 trades.loc[idx, "status"] = "CLOSED"
                 trades.loc[idx, "closed_at"] = now_iso()
-                trades.loc[idx, "close_reason"] = "RISK_EXIT_BINANCE_NOT_ALIGNED"
+                trades.loc[idx, "close_reason"] = (
+                    "RISK_EXIT_BINANCE_CONFLICT"
+                    if conflict_should_close
+                    else "RISK_EXIT_BINANCE_NEUTRAL"
+                )
 
             elif bid is not None and take_profit_price is not None and bid >= take_profit_price:
                 trades.loc[idx, "status"] = "CLOSED"
@@ -503,8 +569,10 @@ def main() -> None:
     print(f"Máximo posiciones abiertas: {max_open_trades}")
     print(f"Máximo nuevas entradas/ciclo: {max_new_trades_per_cycle}")
     print(f"Cerrar si Binance pierde alineación: {close_on_binance_not_aligned}")
-    print(f"Confirmación de salida: {exit_confirmation_cycles} ciclos")
-    print(f"Requerir Flow adverso para salida: {require_flow_exit_confirmation}")
+    print(f"Confirmación de salida legacy: {exit_confirmation_cycles} ciclos")
+    print(f"Salida NEUTRAL: {exit_neutral_cycles} ciclos | min hold {exit_neutral_min_hold} min | pnl <= {exit_neutral_pnl_below}%")
+    print(f"Salida CONFLICT: {exit_conflict_cycles} ciclos | min hold {exit_conflict_min_hold} min | pnl <= {exit_conflict_pnl_below}%")
+    print(f"Requerir Flow adverso para salida NEUTRAL: {require_flow_exit_confirmation}")
     print(f"Salidas bloqueadas por Flow no adverso: {flow_exit_blocked_count}")
     print(f"Cooldown reentrada: {reentry_cooldown_minutes} min")
     print(f"Señales bloqueadas por cooldown: {len(cooldown_blocked_keys)}")
