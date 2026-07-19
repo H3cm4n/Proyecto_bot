@@ -9,70 +9,45 @@ import pandas as pd
 DEFAULT_PATH = "data/crypto_signal_snapshot_fair_value.csv"
 
 
-def main() -> None:
-    path = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH)
-
-    if not path.exists():
-        raise SystemExit(f"No existe el archivo: {path}")
-
-    df = pd.read_csv(path)
-
+def print_binance_state(df: pd.DataFrame) -> None:
     print("\n=== BINANCE MARKET STATE ===")
-    binance_snapshot_path = Path("data/binance_crypto_snapshot.csv")
 
-    if binance_snapshot_path.exists():
-        try:
-            binance_df = pd.read_csv(binance_snapshot_path)
-        except pd.errors.EmptyDataError:
-            binance_df = pd.DataFrame()
+    cols = [
+        "crypto_symbol",
+        "binance_spot_price",
+        "binance_bias",
+        "binance_momentum_5m_pct",
+        "binance_momentum_15m_pct",
+        "binance_window_pct",
+        "binance_bias_score",
+    ]
 
-        binance_cols = [
-            "symbol",
-            "status",
-            "price",
-            "price_change_percent_24h",
-            "momentum_5m_pct",
-            "momentum_15m_pct",
-            "momentum_full_window_pct",
-            "range_full_window_pct",
-        ]
+    existing = [c for c in cols if c in df.columns]
 
-        existing_binance_cols = [col for col in binance_cols if col in binance_df.columns]
+    if "crypto_symbol" not in df.columns or not existing:
+        print("No hay columnas Binance en el snapshot actual.")
+        return
 
-        if existing_binance_cols and not binance_df.empty:
-            state = (
-                binance_df[existing_binance_cols]
-                .drop_duplicates(subset=["symbol"])
-                .sort_values("symbol")
-            )
-            print(state.to_string(index=False))
-        else:
-            print("No hay filas Binance en data/binance_crypto_snapshot.csv.")
-    else:
-        binance_cols = [
-            "crypto_symbol",
-            "binance_spot_price",
-            "binance_bias",
-            "binance_momentum_5m_pct",
-            "binance_momentum_15m_pct",
-        ]
+    state = (
+        df[existing]
+        .drop_duplicates(subset=["crypto_symbol"])
+        .sort_values("crypto_symbol")
+    )
 
-        existing_binance_cols = [col for col in binance_cols if col in df.columns]
+    print(state.to_string(index=False))
 
-        if existing_binance_cols:
-            state = (
-                df[existing_binance_cols]
-                .drop_duplicates(subset=["crypto_symbol"])
-                .sort_values("crypto_symbol")
-            )
-            print(state.to_string(index=False))
 
+def print_decisions(df: pd.DataFrame) -> None:
     print("\n=== DECISIONES ===")
-    if "crypto_decision" in df.columns:
-        print(df["crypto_decision"].value_counts(dropna=False).to_string())
-    else:
-        print("No existe crypto_decision.")
 
+    if "crypto_decision" not in df.columns:
+        print("No existe crypto_decision.")
+        return
+
+    print(df["crypto_decision"].value_counts(dropna=False).to_string())
+
+
+def print_buy_watch(df: pd.DataFrame) -> None:
     print("\n=== BUY / WATCH REALES ===")
 
     if "crypto_decision" not in df.columns:
@@ -95,28 +70,59 @@ def main() -> None:
         "distance_to_threshold_pct",
         "fair_probability",
         "fair_edge_to_ask",
+        "flow_bias",
         "crypto_decision",
         "crypto_decision_reasons",
     ]
+
     cols = [c for c in cols if c in df.columns]
 
     if ops.empty:
         print("No hay oportunidades BUY/WATCH reales ahora.")
-    else:
-        print(
-            ops.sort_values("fair_edge_to_ask", ascending=False, na_position="last")[cols]
-            .to_string(index=False)
-        )
+        return
 
+    sort_col = "fair_edge_to_ask" if "fair_edge_to_ask" in ops.columns else cols[0]
+
+    print(
+        ops.sort_values(sort_col, ascending=False, na_position="last")[cols]
+        .to_string(index=False)
+    )
+
+
+def print_discard_reasons(df: pd.DataFrame) -> None:
     print("\n=== TOP RAZONES DE DESCARTE ===")
-    if "crypto_decision_reasons" in df.columns:
-        print(df["crypto_decision_reasons"].value_counts(dropna=False).head(20).to_string())
-    else:
+
+    if "crypto_decision_reasons" not in df.columns:
         print("No existe crypto_decision_reasons.")
+        return
+
+    print(df["crypto_decision_reasons"].value_counts(dropna=False).head(20).to_string())
+
+
+def main() -> None:
+    path = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH)
+
+    if not path.exists():
+        raise SystemExit(f"No existe el archivo: {path}")
+
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        raise SystemExit(f"Archivo vacío: {path}")
+
+    print_binance_state(df)
+    print_decisions(df)
+    print_buy_watch(df)
+    print_discard_reasons(df)
 
     print("\n=== RESUMEN ===")
     print(f"Filas totales: {len(df)}")
-    print(f"Oportunidades BUY/WATCH: {len(ops)}")
+
+    if "crypto_decision" in df.columns:
+        ops = df[df["crypto_decision"].isin(["CRYPTO_BUY_FAIR_EDGE", "CRYPTO_WATCH_FAIR_EDGE"])]
+        print(f"Oportunidades BUY/WATCH: {len(ops)}")
+    else:
+        print("Oportunidades BUY/WATCH: N/A")
 
 
 if __name__ == "__main__":
