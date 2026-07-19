@@ -61,7 +61,7 @@ while true; do
   python tools/candidate_journal.py "$OUT"
   python tools/research_lane_report.py "$OUT"
   python tools/research_paper_executor.py "$OUT"
-python tools/micro_tpsl_paper_executor.py "$OUT"
+  python tools/micro_tpsl_paper_executor.py "$OUT"
 
   echo
   echo "=== UP/DOWN CLOB PROBE ==="
