@@ -208,6 +208,34 @@ def load_trades() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
+    # Pandas puede inferir columnas vacías como float64.
+    # Eso rompe cuando luego queremos escribir timestamps/strings como exit_time.
+    text_cols = [
+        "trade_id",
+        "status",
+        "strategy",
+        "signal_key",
+        "token_id",
+        "question",
+        "crypto_symbol",
+        "outcome",
+        "entry_time",
+        "exit_time",
+        "last_checked_at",
+        "close_reason",
+        "entry_decision",
+        "entry_flow_bias",
+        "entry_alignment",
+        "latest_decision",
+        "latest_flow_bias",
+        "latest_alignment",
+        "last_update_status",
+    ]
+
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].astype("object")
+
     return df[TRADE_COLUMNS].copy()
 
 
