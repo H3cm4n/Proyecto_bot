@@ -85,13 +85,40 @@ def find_matching_trade(row: pd.Series, trades: pd.DataFrame) -> pd.Series | Non
     if trades.empty:
         return None
 
-    signal_key = row.get("signal_key")
     observed_at = row.get("observed_at_dt")
 
     if pd.isna(observed_at):
         return None
 
-    same_signal = trades[trades["signal_key"].astype(str) == str(signal_key)].copy()
+    signal_key = str(row.get("signal_key", ""))
+    token_id = str(row.get("token_id", ""))
+    question = str(row.get("question", ""))
+    outcome = str(row.get("outcome", "")).lower()
+
+    candidates = trades.copy()
+
+    masks = []
+
+    if "signal_key" in candidates.columns and signal_key:
+        masks.append(candidates["signal_key"].astype(str) == signal_key)
+
+    if "token_id" in candidates.columns and token_id:
+        masks.append(candidates["token_id"].astype(str) == token_id)
+
+    if {"question", "outcome"}.issubset(candidates.columns):
+        masks.append(
+            (candidates["question"].astype(str) == question)
+            & (candidates["outcome"].astype(str).str.lower() == outcome)
+        )
+
+    if not masks:
+        return None
+
+    combined = masks[0]
+    for mask in masks[1:]:
+        combined = combined | mask
+
+    same_signal = candidates[combined].copy()
 
     if same_signal.empty:
         return None
