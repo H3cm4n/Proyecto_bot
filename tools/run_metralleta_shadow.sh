@@ -21,10 +21,10 @@ while true; do
   echo "Actualizando snapshot fresco..."
   python main.py crypto-snapshot \
     --gamma-source search \
-    --search-query bitcoin above \
-    --search-query ethereum above \
-    --search-query solana above \
-    --search-query xrp above \
+    --search-query "bitcoin above" \
+    --search-query "ethereum above" \
+    --search-query "solana above" \
+    --search-query "xrp above" \
     --event-limit 1000 \
     --market-limit 100 \
     --request-delay 0.2 \
