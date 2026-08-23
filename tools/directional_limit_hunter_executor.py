@@ -99,14 +99,50 @@ def minutes_since(value: str, now_ts) -> float:
     return max(0.0, (now_ts - ts).total_seconds() / 60.0)
 
 
+TEXT_COLUMNS = {
+    "order_id",
+    "trade_id",
+    "status",
+    "created_at",
+    "filled_at",
+    "canceled_at",
+    "cancel_reason",
+    "entry_time",
+    "exit_time",
+    "match_key",
+    "token_id",
+    "question",
+    "outcome",
+    "crypto_symbol",
+    "directional_side",
+    "crypto_decision",
+    "crypto_alignment",
+    "binance_bias",
+    "entry_decision",
+    "entry_alignment",
+    "entry_binance_bias",
+    "close_reason",
+}
+
+
 def read_table(path: Path, columns: list[str]) -> pd.DataFrame:
     if not path.exists():
-        return pd.DataFrame(columns=columns)
-    df = pd.read_csv(path)
+        df = pd.DataFrame(columns=columns)
+    else:
+        df = pd.read_csv(path)
+
     for col in columns:
         if col not in df.columns:
-            df[col] = pd.NA
-    return df[columns].copy()
+            df[col] = ""
+
+    out = df[columns].copy()
+
+    for col in columns:
+        if col in TEXT_COLUMNS:
+            out[col] = out[col].astype("object")
+            out[col] = out[col].where(out[col].notna(), "")
+
+    return out
 
 
 def write_table(path: Path, df: pd.DataFrame) -> None:
