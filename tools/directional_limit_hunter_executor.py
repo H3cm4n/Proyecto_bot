@@ -24,6 +24,7 @@ STOP_LOSS_PCT = float(os.getenv("LIMIT_HUNTER_STOP_LOSS_PCT", "8"))
 MAX_HOLD_MINUTES = float(os.getenv("LIMIT_HUNTER_MAX_HOLD_MINUTES", "180"))
 PENDING_TTL_MINUTES = float(os.getenv("LIMIT_HUNTER_PENDING_TTL_MINUTES", "90"))
 ENTRY_COOLDOWN_MINUTES = float(os.getenv("LIMIT_HUNTER_ENTRY_COOLDOWN_MINUTES", "60"))
+CANCEL_WHEN_SIGNAL_GONE = os.getenv("LIMIT_HUNTER_CANCEL_WHEN_SIGNAL_GONE", "1") == "1"
 
 
 ORDER_COLUMNS = [
@@ -245,6 +246,7 @@ def update_pending_orders(
     trades: pd.DataFrame,
     marks: dict[str, pd.Series],
     now_ts,
+    current_candidate_keys: set[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, int, int]:
     filled_count = 0
     canceled_count = 0
@@ -254,6 +256,19 @@ def update_pending_orders(
         return orders, trades, filled_count, canceled_count
 
     for idx, order in orders[orders["status"].eq("PENDING")].iterrows():
+        key = str(order.get("match_key", ""))
+
+        if (
+            CANCEL_WHEN_SIGNAL_GONE
+            and current_candidate_keys is not None
+            and key not in current_candidate_keys
+        ):
+            orders.at[idx, "status"] = "CANCELED"
+            orders.at[idx, "canceled_at"] = now_iso()
+            orders.at[idx, "cancel_reason"] = "CURRENT_SIGNAL_GONE"
+            canceled_count += 1
+            continue
+
         age_min = minutes_since(str(order.get("created_at", "")), now_ts)
 
         if age_min >= PENDING_TTL_MINUTES:
@@ -461,8 +476,16 @@ def main() -> None:
     orders_before = len(orders)
     trades_before = len(trades)
 
+    current_candidate_keys = set(candidates["match_key"].dropna().astype(str).tolist())
+
     trades, closed_count = update_open_trades(trades, marks, now_ts)
-    orders, trades, filled_count, canceled_count = update_pending_orders(orders, trades, marks, now_ts)
+    orders, trades, filled_count, canceled_count = update_pending_orders(
+        orders,
+        trades,
+        marks,
+        now_ts,
+        current_candidate_keys,
+    )
     orders, new_orders_count = create_new_orders(candidates, orders, trades, now_ts)
 
     write_table(ORDERS_PATH, orders)
@@ -489,6 +512,7 @@ def main() -> None:
     print(f"Max hold: {MAX_HOLD_MINUTES:.1f} min")
     print(f"Pending TTL: {PENDING_TTL_MINUTES:.1f} min")
     print(f"Cooldown: {ENTRY_COOLDOWN_MINUTES:.1f} min")
+    print(f"Cancel when signal gone: {CANCEL_WHEN_SIGNAL_GONE}")
 
     print("\nCandidatos disponibles:", len(candidates))
     print("Órdenes antes/después:", f"{orders_before}/{len(orders)}")
