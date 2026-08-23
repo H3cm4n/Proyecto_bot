@@ -9,6 +9,7 @@ import pandas as pd
 
 
 SNAPSHOT_PATH = Path(os.getenv("TOPN_SNAPSHOT_PATH", "data/crypto_signal_snapshot_fair_value.csv"))
+MARK_SNAPSHOT_PATH = Path(os.getenv("TOPN_MARK_SNAPSHOT_PATH", str(SNAPSHOT_PATH)))
 TRADES_PATH = Path(os.getenv("TOPN_TRADES_PATH", "data/topn_shadow_trades.csv"))
 
 TRADE_USD = float(os.getenv("TOPN_TRADE_USD", "0.10"))
@@ -126,11 +127,11 @@ def save_trades(df: pd.DataFrame) -> None:
     df[COLUMNS].to_csv(TRADES_PATH, index=False)
 
 
-def load_snapshot() -> pd.DataFrame:
-    if not SNAPSHOT_PATH.exists():
-        raise SystemExit(f"No existe snapshot: {SNAPSHOT_PATH}")
+def load_snapshot(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise SystemExit(f"No existe snapshot: {path}")
 
-    df = pd.read_csv(SNAPSHOT_PATH)
+    df = pd.read_csv(path)
 
     text_cols = [
         "question",
@@ -359,7 +360,8 @@ def make_trade(row, now: datetime) -> dict:
 
 def print_status(trades: pd.DataFrame, candidates: pd.DataFrame, opened: list[dict], closed_now: list[dict]) -> None:
     print("\n=== TOPN SHADOW EXECUTION ===")
-    print(f"Snapshot: {SNAPSHOT_PATH}")
+    print(f"Entry snapshot: {SNAPSHOT_PATH}")
+    print(f"Mark snapshot: {MARK_SNAPSHOT_PATH}")
     print(f"Trades file: {TRADES_PATH}")
     print(f"Trade USD: ${TRADE_USD:.2f}")
     print(f"Max open: {MAX_OPEN}")
@@ -434,13 +436,14 @@ def print_status(trades: pd.DataFrame, candidates: pd.DataFrame, opened: list[di
 def main() -> None:
     now = now_utc()
 
-    snapshot = load_snapshot()
+    entry_snapshot = load_snapshot(SNAPSHOT_PATH)
+    mark_snapshot = load_snapshot(MARK_SNAPSHOT_PATH) if MARK_SNAPSHOT_PATH != SNAPSHOT_PATH else entry_snapshot
     trades_old = load_trades()
 
     open_df, closed_df = split_status(trades_old)
-    still_open, newly_closed = update_open_positions(open_df, snapshot, now)
+    still_open, newly_closed = update_open_positions(open_df, mark_snapshot, now)
 
-    candidates = build_candidates(snapshot)
+    candidates = build_candidates(entry_snapshot)
 
     last_entry = build_last_entry_map(trades_old)
     open_keys = {str(p.get("cooldown_key", "")) for p in still_open}

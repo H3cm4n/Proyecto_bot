@@ -51,16 +51,17 @@ while true; do
   RAPID_FILTERED_SNAPSHOT=data/rapid_shadow_snapshot.csv \
   RAPID_SYMBOLS=BTCUSDT,ETHUSDT \
   RAPID_MIN_EDGE=0.15 \
-  RAPID_MIN_SCORE=70 \
-  RAPID_MAX_SPREAD=0.02 \
+  RAPID_MIN_SCORE=65 \
+  RAPID_MAX_SPREAD=0.03 \
   RAPID_MIN_ASK=0.45 \
-  RAPID_MAX_ASK=0.70 \
+  RAPID_MAX_ASK=0.85 \
   RAPID_REQUIRE_FLOW=0 \
   python tools/filter_rapid_shadow_snapshot.py
 
   echo
   echo "Ejecutando rapid shadow..."
   TOPN_SNAPSHOT_PATH=data/rapid_shadow_snapshot.csv \
+  TOPN_MARK_SNAPSHOT_PATH=data/crypto_signal_snapshot_fair_value.csv \
   TOPN_TRADES_PATH=data/rapid_shadow_trades.csv \
   TOPN_TRADE_USD=0.25 \
   TOPN_MAX_OPEN=5 \
@@ -68,10 +69,10 @@ while true; do
   TOPN_ALLOWED_SYMBOLS=BTCUSDT,ETHUSDT \
   TOPN_ALLOWED_OUTCOMES=Yes \
   TOPN_MIN_EDGE=0.15 \
-  TOPN_MIN_SCORE=70 \
-  TOPN_MAX_SPREAD=0.02 \
+  TOPN_MIN_SCORE=65 \
+  TOPN_MAX_SPREAD=0.03 \
   TOPN_MIN_ASK=0.45 \
-  TOPN_MAX_ASK=0.70 \
+  TOPN_MAX_ASK=0.85 \
   TOPN_TAKE_PROFIT_PCT=3 \
   TOPN_STOP_LOSS_PCT=5 \
   TOPN_MAX_HOLD_MINUTES=90 \

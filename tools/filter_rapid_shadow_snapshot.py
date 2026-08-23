@@ -65,9 +65,8 @@ def main() -> None:
     base_mask = (
         df["crypto_symbol"].str.upper().isin(SYMBOLS)
         & (df["outcome"].str.lower() == "yes")
-        & (df["crypto_decision"] == "CRYPTO_BUY_FAIR_EDGE")
+        & df["crypto_decision"].isin(["CRYPTO_BUY_FAIR_EDGE", "CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH"])
         & (df["crypto_alignment"] == "ALIGNED")
-        & (df["binance_bias"] == "BULLISH")
         & df["best_bid"].notna()
         & df["best_ask"].notna()
         & df["best_ask"].between(MIN_ASK, MAX_ASK, inclusive="both")
@@ -98,6 +97,7 @@ def main() -> None:
     print("Rapid candidates:", len(out))
     print("Require flow:", REQUIRE_FLOW)
     print("Symbols:", sorted(SYMBOLS))
+    print("Allowed decisions: CRYPTO_BUY_FAIR_EDGE + CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH")
     print(f"Edge >= {MIN_EDGE}, score >= {MIN_SCORE}, spread <= {MAX_SPREAD}, ask {MIN_ASK}-{MAX_ASK}")
 
     print("\nDecisiones source:")
