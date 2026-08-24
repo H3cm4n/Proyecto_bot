@@ -43,6 +43,7 @@ ORDER_COLUMNS = [
     "crypto_symbol",
     "directional_side",
     "limit_price",
+    "fill_price",
     "created_best_bid",
     "created_best_ask",
     "current_best_bid",
@@ -69,6 +70,7 @@ TRADE_COLUMNS = [
     "crypto_symbol",
     "directional_side",
     "entry_price",
+    "entry_limit_price",
     "current_bid",
     "current_ask",
     "exit_price",
@@ -348,10 +350,16 @@ def update_pending_orders(
         if ask <= limit_price:
             order_id = str(order["order_id"])
             trade_id = f"lhtrade_{uuid.uuid4().hex[:12]}"
-            shares = TRADE_USD / limit_price
+            fill_price = min(float(limit_price), float(ask))
+
+            if fill_price <= 0:
+                continue
+
+            shares = TRADE_USD / fill_price
 
             orders.at[idx, "status"] = "FILLED"
             orders.at[idx, "filled_at"] = now_iso()
+            orders.at[idx, "fill_price"] = fill_price
 
             new_trades.append(
                 {
@@ -366,7 +374,8 @@ def update_pending_orders(
                     "outcome": order.get("outcome", ""),
                     "crypto_symbol": order.get("crypto_symbol", ""),
                     "directional_side": order.get("directional_side", ""),
-                    "entry_price": limit_price,
+                    "entry_price": fill_price,
+                    "entry_limit_price": limit_price,
                     "current_bid": bid,
                     "current_ask": ask,
                     "exit_price": pd.NA,
@@ -482,6 +491,7 @@ def create_new_orders(
                 "crypto_symbol": row.get("crypto_symbol", ""),
                 "directional_side": row.get("directional_side", ""),
                 "limit_price": limit_price,
+                "fill_price": pd.NA,
                 "created_best_bid": row.get("best_bid", pd.NA),
                 "created_best_ask": row.get("best_ask", pd.NA),
                 "current_best_bid": row.get("best_bid", pd.NA),
@@ -596,6 +606,7 @@ def main() -> None:
             "crypto_symbol",
             "outcome",
             "limit_price",
+            "fill_price",
             "created_best_bid",
             "created_best_ask",
             "current_best_bid",
@@ -616,6 +627,7 @@ def main() -> None:
             "crypto_symbol",
             "outcome",
             "entry_price",
+            "entry_limit_price",
             "current_bid",
             "current_ask",
             "exit_price",
