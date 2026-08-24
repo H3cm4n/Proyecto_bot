@@ -25,6 +25,7 @@ MAX_HOLD_MINUTES = float(os.getenv("LIMIT_HUNTER_MAX_HOLD_MINUTES", "180"))
 PENDING_TTL_MINUTES = float(os.getenv("LIMIT_HUNTER_PENDING_TTL_MINUTES", "90"))
 ENTRY_COOLDOWN_MINUTES = float(os.getenv("LIMIT_HUNTER_ENTRY_COOLDOWN_MINUTES", "60"))
 CANCEL_WHEN_SIGNAL_GONE = os.getenv("LIMIT_HUNTER_CANCEL_WHEN_SIGNAL_GONE", "1") == "1"
+SIGNAL_GONE_GRACE_CYCLES = int(os.getenv("LIMIT_HUNTER_SIGNAL_GONE_GRACE_CYCLES", "3"))
 
 
 ORDER_COLUMNS = [
@@ -34,6 +35,7 @@ ORDER_COLUMNS = [
     "filled_at",
     "canceled_at",
     "cancel_reason",
+    "signal_miss_count",
     "match_key",
     "token_id",
     "question",
@@ -294,16 +296,29 @@ def update_pending_orders(
     for idx, order in orders[orders["status"].eq("PENDING")].iterrows():
         key = str(order.get("match_key", ""))
 
-        if (
-            CANCEL_WHEN_SIGNAL_GONE
-            and current_candidate_keys is not None
-            and key not in current_candidate_keys
-        ):
-            orders.at[idx, "status"] = "CANCELED"
-            orders.at[idx, "canceled_at"] = now_iso()
-            orders.at[idx, "cancel_reason"] = "CURRENT_SIGNAL_GONE"
-            canceled_count += 1
-            continue
+        if current_candidate_keys is not None:
+            raw_miss_count = pd.to_numeric(
+                order.get("signal_miss_count", 0),
+                errors="coerce",
+            )
+
+            if pd.isna(raw_miss_count):
+                raw_miss_count = 0
+
+            miss_count = int(raw_miss_count)
+
+            if key not in current_candidate_keys:
+                miss_count += 1
+                orders.at[idx, "signal_miss_count"] = miss_count
+
+                if CANCEL_WHEN_SIGNAL_GONE and miss_count >= SIGNAL_GONE_GRACE_CYCLES:
+                    orders.at[idx, "status"] = "CANCELED"
+                    orders.at[idx, "canceled_at"] = now_iso()
+                    orders.at[idx, "cancel_reason"] = f"CURRENT_SIGNAL_GONE_{miss_count}_CYCLES"
+                    canceled_count += 1
+                    continue
+            else:
+                orders.at[idx, "signal_miss_count"] = 0
 
         age_min = minutes_since(str(order.get("created_at", "")), now_ts)
 
@@ -459,6 +474,7 @@ def create_new_orders(
                 "filled_at": "",
                 "canceled_at": "",
                 "cancel_reason": "",
+                "signal_miss_count": 0,
                 "match_key": key,
                 "token_id": row.get("token_id", ""),
                 "question": row.get("question", ""),
@@ -549,6 +565,7 @@ def main() -> None:
     print(f"Pending TTL: {PENDING_TTL_MINUTES:.1f} min")
     print(f"Cooldown: {ENTRY_COOLDOWN_MINUTES:.1f} min")
     print(f"Cancel when signal gone: {CANCEL_WHEN_SIGNAL_GONE}")
+    print(f"Signal gone grace cycles: {SIGNAL_GONE_GRACE_CYCLES}")
 
     print("\nCandidatos disponibles:", len(candidates))
     print("Órdenes antes/después:", f"{orders_before}/{len(orders)}")
@@ -585,6 +602,7 @@ def main() -> None:
             "current_best_ask",
             "score",
             "limit_edge",
+            "signal_miss_count",
             "crypto_decision",
             "question",
         ]

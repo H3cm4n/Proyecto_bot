@@ -60,6 +60,8 @@ while true; do
   LIMIT_HUNTER_MAX_HOLD_MINUTES=180 \
   LIMIT_HUNTER_PENDING_TTL_MINUTES=90 \
   LIMIT_HUNTER_ENTRY_COOLDOWN_MINUTES=60 \
+  LIMIT_HUNTER_CANCEL_WHEN_SIGNAL_GONE=1 \
+  LIMIT_HUNTER_SIGNAL_GONE_GRACE_CYCLES=3 \
   python tools/directional_limit_hunter_executor.py
 
   if [[ "$ONCE" == "1" ]]; then
