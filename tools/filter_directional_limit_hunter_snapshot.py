@@ -18,13 +18,13 @@ ALLOWED_DECISIONS = {
     x.strip()
     for x in os.getenv(
         "LIMIT_HUNTER_ALLOWED_DECISIONS",
-        "CRYPTO_BUY_FAIR_EDGE,CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH,CRYPTO_AVOID_ASK_TOO_HIGH",
+        "CRYPTO_BUY_FAIR_EDGE,CRYPTO_WAIT_ENTRY_ASK_TOO_HIGH",
     ).split(",")
     if x.strip()
 }
 
 MIN_EDGE = float(os.getenv("LIMIT_HUNTER_MIN_EDGE", "0.20"))
-MIN_SCORE = float(os.getenv("LIMIT_HUNTER_MIN_SCORE", "40"))
+MIN_SCORE = float(os.getenv("LIMIT_HUNTER_MIN_SCORE", "65"))
 MAX_SPREAD = float(os.getenv("LIMIT_HUNTER_MAX_SPREAD", "0.05"))
 MIN_ASK = float(os.getenv("LIMIT_HUNTER_MIN_ASK", "0.50"))
 MAX_ASK = float(os.getenv("LIMIT_HUNTER_MAX_ASK", "0.80"))
