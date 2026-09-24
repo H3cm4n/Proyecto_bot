@@ -6,3 +6,10 @@ __pycache__/
 /logs/
 *.db
 /checkpoints/
+.env
+.env
+
+.env
+paper_portfolio.json
+__pycache__/
+*.pyc
